@@ -1,0 +1,28 @@
+# Gradle and Android Studio local state
+.gradle/
+.gradle-user/
+.kotlin/
+.idea/
+*.iml
+
+# Local Android SDK configuration
+local.properties
+
+# Generated build artifacts
+**/build/
+.build-output/
+*.apk
+*.aab
+deliverables/
+
+# Native build and captured-device files
+.cxx/
+captures/
+
+# Internal work logs and retired local-only artwork
+docs/UI-*.md
+docs/WORK-*.md
+docs/SETTINGS-*.md
+docs/reviews/
+docs/咸鱼大王-外部产品与架构审核简报-*.md
+app/src/main/res/drawable-nodpi/ic_launcher_dave.png

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="habit_widget_description">在桌面直接完成今天的待办和习惯打卡</string>
+    <string name="habit_widget_title">今日清单</string>
+    <string name="habit_widget_empty">今天还没有待办或打卡项目</string>
+</resources>

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_habit_row"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:background="@drawable/widget_row_background"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="0dp"
+    android:paddingEnd="12dp">
+
+    <TextView
+        android:id="@+id/widget_habit_stripe"
+        android:layout_width="8dp"
+        android:layout_height="match_parent"
+        android:background="#4F7DC9" />
+
+    <TextView
+        android:id="@+id/widget_habit_mark"
+        android:layout_width="34dp"
+        android:layout_height="34dp"
+        android:layout_marginStart="9dp"
+        android:background="@drawable/widget_circle"
+        android:gravity="center"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/widget_habit_title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:layout_weight="1"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="#1B2925"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/widget_habit_progress"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="#355C52"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+</LinearLayout>

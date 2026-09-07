@@ -1,0 +1,14 @@
+{
+  "tag_name": "v0.1.1",
+  "name": "咸鱼大王 0.1.1 (Build 13)",
+  "body": "首个公开可用预览版：待办、习惯、多媒体日记、日记缩略图与 TAG、人生清单及加密备份。",
+  "html_url": "https://github.com/fivespeedbuck/fishking/releases/tag/v0.1.1",
+  "assets": [
+    {
+      "name": "fishking-0.1.1-build13-inner-tags-text-icon-20260908-debug.apk",
+      "browser_download_url": "https://github.com/fivespeedbuck/fishking/releases/download/v0.1.1/fishking-0.1.1-build13-inner-tags-text-icon-20260908-debug.apk",
+      "size": 21477299,
+      "digest": "sha256:D14C0AA232A0DF2A82D58B2E40D7239A608A2CA2C1749C075BE501F01EF19E3A"
+    }
+  ]
+}
