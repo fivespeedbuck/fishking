@@ -52,19 +52,62 @@ class HomePresentationTest {
     }
 
     @Test
-    fun weeklyHabitCompletesOnlyAfterItsWeeklyQuota() {
-        val weekly = habit("weekly", 1, 2, HabitPeriod.WEEKLY)
+    fun weeklyHabitMovesBelowDividerAfterTodaysCheckWithoutLosingPeriodProgress() {
+        val weekly = habit("weekly", 2, 4, HabitPeriod.WEEKLY)
         val checked = buildHomeDisplaySections(date, emptyList(), listOf(weekly))
         val unchecked = buildHomeDisplaySections(date.plusDays(1), emptyList(), listOf(weekly))
-        assertFalse(checked.openHabits.single().isComplete)
-        assertEquals(1, checked.openHabits.single().count)
+        assertTrue(checked.openHabits.isEmpty())
+        assertTrue(checked.completedHabits.single().isComplete)
+        assertEquals(2, checked.completedHabits.single().count)
+        assertEquals(4, checked.completedHabits.single().value.targetCount)
         assertFalse(unchecked.openHabits.single().isComplete)
-        assertEquals(1, unchecked.openHabits.single().count)
-        assertFalse(buildWeekRows(buildWeekEntries(date, emptyList(), listOf(weekly))).single().startsCompletedSection)
+        assertEquals(2, unchecked.openHabits.single().count)
+        assertTrue(buildWeekRows(buildWeekEntries(date, emptyList(), listOf(weekly))).single().startsCompletedSection)
+        assertFalse(buildWeekRows(buildWeekEntries(date.plusDays(1), emptyList(), listOf(weekly))).single().startsCompletedSection)
+    }
 
-        val complete = buildHomeDisplaySections(date, emptyList(), listOf(habit("weekly", 2, 2, HabitPeriod.WEEKLY)))
+    @Test
+    fun monthlyHabitUsesTodaysCheckForBothHomeViews() {
+        val monthly = habit("monthly", 2, 4, HabitPeriod.MONTHLY)
+        val checked = buildHomeDisplaySections(date, emptyList(), listOf(monthly))
+        assertTrue(checked.openHabits.isEmpty())
+        assertEquals(2, checked.completedHabits.single().count)
+        assertTrue(buildWeekRows(buildWeekEntries(date, emptyList(), listOf(monthly))).single().startsCompletedSection)
+        val unchecked = buildHomeDisplaySections(date.plusDays(1), emptyList(), listOf(monthly))
+        assertFalse(unchecked.openHabits.single().isComplete)
+        assertEquals(2, unchecked.openHabits.single().count)
+    }
+
+    @Test
+    fun undoingPeriodicCheckReturnsHabitAboveDividerAndPreservesOtherDates() {
+        for (period in listOf(HabitPeriod.WEEKLY, HabitPeriod.MONTHLY)) {
+            val before = habit("periodic", 2, 4, period)
+            val undone = before.copy(records = before.records.filterNot { it.date == date })
+            val sections = buildHomeDisplaySections(date, emptyList(), listOf(undone))
+            assertTrue(sections.completedHabits.isEmpty())
+            assertEquals(1, sections.openHabits.single().count)
+            assertFalse(sections.openHabits.single().checkedOnDate)
+            assertFalse(buildWeekRows(buildWeekEntries(date, emptyList(), listOf(undone))).single().startsCompletedSection)
+        }
+    }
+
+    @Test
+    fun periodQuotaDoesNotMarkAnUncheckedDateCompleted() {
+        for (period in listOf(HabitPeriod.WEEKLY, HabitPeriod.MONTHLY)) {
+            val completed = habit("periodic", 4, 4, period)
+            val sections = buildHomeDisplaySections(date.plusDays(1), emptyList(), listOf(completed))
+            assertTrue(sections.completedHabits.isEmpty())
+            assertEquals(4, sections.openHabits.single().count)
+            assertFalse(sections.openHabits.single().checkedOnDate)
+        }
+    }
+
+    @Test
+    fun dailyHabitStillNeedsItsFullDailyCount() {
+        val partial = buildHomeDisplaySections(date, emptyList(), listOf(habit("daily", 1, 2)))
+        assertFalse(partial.openHabits.single().isComplete)
+        val complete = buildHomeDisplaySections(date, emptyList(), listOf(habit("daily", 2, 2)))
         assertTrue(complete.completedHabits.single().isComplete)
-        assertEquals(2, complete.completedHabits.single().count)
     }
 
     private fun todo(
@@ -103,10 +146,9 @@ class HomePresentationTest {
         isSkipped = false,
         records = when (period) {
             HabitPeriod.DAILY -> listOf(HabitDayRecord(id, date, count, false, Instant.EPOCH))
-            HabitPeriod.WEEKLY -> (0 until count).map { offset ->
+            HabitPeriod.WEEKLY, HabitPeriod.MONTHLY -> (0 until count).map { offset ->
                 HabitDayRecord(id, date.minusDays(offset.toLong()), 1, false, Instant.EPOCH)
             }
-            HabitPeriod.MONTHLY -> listOf(HabitDayRecord(id, date, count, false, Instant.EPOCH))
         },
     )
 }

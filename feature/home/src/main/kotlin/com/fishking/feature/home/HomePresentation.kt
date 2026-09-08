@@ -76,12 +76,18 @@ internal fun buildHomeDisplaySections(
         .map { habit ->
             val dayRecord = habit.records.firstOrNull { it.date == date }
             val count = habit.effectiveCountFor(date)
+            val checkedOnDate = (dayRecord?.count ?: 0) > 0
             HomeDisplayItem.Habit(
                 value = habit,
                 count = count,
-                checkedOnDate = (dayRecord?.count ?: 0) > 0,
+                checkedOnDate = checkedOnDate,
                 isBackfilled = dayRecord?.isBackfilled == true,
-                isComplete = count >= habit.targetCount,
+                // Home groups reflect completion on this date, not the period quota.
+                // Keep the weekly/monthly total for the progress label.
+                isComplete = when (habit.period) {
+                    HabitPeriod.DAILY -> count >= habit.targetCount
+                    HabitPeriod.WEEKLY, HabitPeriod.MONTHLY -> checkedOnDate
+                },
             )
         }
         .toList()
