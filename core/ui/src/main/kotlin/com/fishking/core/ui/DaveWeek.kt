@@ -315,7 +315,7 @@ fun DaveCompactHabitCard(
             DaveTitle(titleParts.title, color = progressColor, fontSize = 14.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, textDecoration = if (visuallyComplete) TextDecoration.LineThrough else TextDecoration.None)
             Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(5.dp)) {
                 Text("$count/$targetCount", color = progressColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text("#日常", color = progressColor, fontSize = 9.sp, maxLines = 1)
+                Text("#${habitPeriodTag(period)}", color = progressColor, fontSize = 9.sp, maxLines = 1)
             }
         }
         if (visuallyComplete) Text("CLEAR", color = DavePalette.Completed, fontSize = 8.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 5.dp).rotate(7f))

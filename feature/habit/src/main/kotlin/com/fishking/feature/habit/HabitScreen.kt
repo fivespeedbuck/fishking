@@ -104,8 +104,8 @@ fun HabitScreen(
             positionedMode = continuous
         }
     }
-    LaunchedEffect(draftVisible, editingId) {
-        if (draftVisible || editingId != null) {
+    LaunchedEffect(draftVisible) {
+        if (draftVisible) {
             val index = timeline.indexOfFirst { it.weekStart == currentWeek }
             if (index >= 0) listState.animateScrollToItem(index)
         }
@@ -145,36 +145,38 @@ fun HabitScreen(
                         viewModel.reorderHabitRelative(visibleIds, source, target, after)
                     },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                    footer = if (snapshot.weekStart == currentWeek) {
+                    editingHabitId = editingId,
+                    habitEditor = if (editingId != null) {
                         {
-                            if (editingId != null) {
-                                HabitEditor(
-                                    title = editingTitle,
-                                    period = editingPeriod,
-                                    target = editingTarget,
-                                    scheduleDays = editingScheduleDays,
-                                    color = editingColor,
-                                    onTitleChange = viewModel::updateEditingTitle,
-                                    onPeriodChange = viewModel::setEditingPeriod,
-                                    onTargetChange = viewModel::setEditingTarget,
-                                    onScheduleDayToggle = viewModel::toggleEditingScheduleDay,
-                                    onColorChange = viewModel::setEditingColor,
-                                    onConfirm = viewModel::confirmEditing,
-                                    onCancel = viewModel::cancelEditing,
-                                )
-                            } else {
-                                NewHabitArea(
-                                    draftVisible = draftVisible,
-                                    draftTitle = draftTitle,
-                                    draftPeriod = draftPeriod,
-                                    draftTarget = draftTarget,
-                                    draftScheduleDays = draftScheduleDays,
-                                    draftColor = draftColor,
-                                    isEmpty = snapshot.items.isEmpty(),
-                                    currentDate = currentDate,
-                                    viewModel = viewModel,
-                                )
-                            }
+                            HabitEditor(
+                                title = editingTitle,
+                                period = editingPeriod,
+                                target = editingTarget,
+                                scheduleDays = editingScheduleDays,
+                                color = editingColor,
+                                onTitleChange = viewModel::updateEditingTitle,
+                                onPeriodChange = viewModel::setEditingPeriod,
+                                onTargetChange = viewModel::setEditingTarget,
+                                onScheduleDayToggle = viewModel::toggleEditingScheduleDay,
+                                onColorChange = viewModel::setEditingColor,
+                                onConfirm = viewModel::confirmEditing,
+                                onCancel = viewModel::cancelEditing,
+                            )
+                        }
+                    } else null,
+                    footer = if (snapshot.weekStart == currentWeek && editingId == null) {
+                        {
+                            NewHabitArea(
+                                draftVisible = draftVisible,
+                                draftTitle = draftTitle,
+                                draftPeriod = draftPeriod,
+                                draftTarget = draftTarget,
+                                draftScheduleDays = draftScheduleDays,
+                                draftColor = draftColor,
+                                isEmpty = snapshot.items.isEmpty(),
+                                currentDate = currentDate,
+                                viewModel = viewModel,
+                            )
                         }
                     } else null,
                 )

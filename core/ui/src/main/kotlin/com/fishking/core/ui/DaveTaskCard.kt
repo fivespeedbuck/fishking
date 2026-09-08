@@ -177,7 +177,7 @@ fun DaveHabitCard(
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("$count/$targetCount", color = progressColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Text((listOf("日常") + titleParts.tags).distinct().joinToString(" ") { "#$it" }, color = progressColor, fontSize = 12.sp, maxLines = 1)
+                Text((listOf(habitPeriodTag(period)) + titleParts.tags).distinct().joinToString(" ") { "#$it" }, color = progressColor, fontSize = 12.sp, maxLines = 1)
                 if (isBackfilled) Text("补", color = DavePalette.Meta, fontSize = 10.sp)
             }
         }

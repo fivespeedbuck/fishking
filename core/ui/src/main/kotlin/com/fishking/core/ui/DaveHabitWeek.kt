@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -77,6 +78,8 @@ fun DaveHabitWeekPanel(
     onReorderHabit: (sourceId: String, targetId: String, after: Boolean) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
     footer: (@Composable () -> Unit)? = null,
+    editingHabitId: String? = null,
+    habitEditor: (@Composable () -> Unit)? = null,
 ) {
     val isCurrentWeek = !today.isBefore(snapshot.weekStart) && !today.isAfter(snapshot.weekEnd)
     androidx.compose.runtime.CompositionLocalProvider(LocalDaveReorderCommit provides onReorderHabit) {
@@ -102,18 +105,24 @@ fun DaveHabitWeekPanel(
                 }
         }
         snapshot.items.forEach { habit ->
-            HabitWeekRow(
-                habit = habit,
-                today = today,
-                allowActions = isCurrentWeek,
-                onToggle = onToggle,
-                onEdit = onEdit,
-                onToggleSkip = onToggleSkip,
-                onEndFromWeek = onEndFromWeek,
-                historical = !isCurrentWeek,
-                onDeleteHabit = onDeleteHabit,
-                reorderEnabled = isCurrentWeek,
-            )
+            key(habit.id) {
+                if (isCurrentWeek && habit.id == editingHabitId && habitEditor != null) {
+                    habitEditor()
+                } else {
+                    HabitWeekRow(
+                        habit = habit,
+                        today = today,
+                        allowActions = isCurrentWeek,
+                        onToggle = onToggle,
+                        onEdit = onEdit,
+                        onToggleSkip = onToggleSkip,
+                        onEndFromWeek = onEndFromWeek,
+                        historical = !isCurrentWeek,
+                        onDeleteHabit = onDeleteHabit,
+                        reorderEnabled = isCurrentWeek && editingHabitId == null,
+                    )
+                }
+            }
         }
         footer?.invoke()
     }
@@ -315,7 +324,7 @@ private fun HabitWeekRow(
                     modifier = Modifier.padding(end = 2.dp),
                 )
                 if (habit.period != HabitPeriod.DAILY) Text(
-                    text = "${habit.effectiveCountFor(habit.weekStart.plusDays(3))}/${habit.targetCount}",
+                    text = habitPeriodProgress(habit.effectiveCountFor(habit.weekStart.plusDays(3)), habit.targetCount, habit.period),
                     color = Color(habit.color), fontSize = 12.sp, fontWeight = FontWeight.Bold,
                 )
             }

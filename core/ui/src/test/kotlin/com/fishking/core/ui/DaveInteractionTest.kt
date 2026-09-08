@@ -302,8 +302,89 @@ class DaveInteractionTest {
             checkedOnDate = true, onClick = {}) }
         compose.onNodeWithText("1/2").assertIsDisplayed()
         compose.onNodeWithText("CLEAR").assertIsDisplayed()
-        compose.onNodeWithText("#日常").assertIsDisplayed()
+        compose.onNodeWithText("#周常").assertIsDisplayed()
     }
+
+    @Test fun homeHabitTagsFollowPeriodAndCompactCardsHideCustomTags() {
+        content {
+            Column {
+                DaveHabitCard("刷牙", 0, 1, HabitPeriod.DAILY, 0xFF8FA7E4, false, onClick = {})
+                DaveHabitCard("月度整理 #家务", 0, 1, HabitPeriod.MONTHLY, 0xFF8FA7E4, false, onClick = {})
+                DaveCompactHabitCard("运动 #自定义周", 0, 4, HabitPeriod.WEEKLY, 0xFF8FA7E4, onClick = {})
+                DaveCompactHabitCard("月检 #自定义月", 0, 1, HabitPeriod.MONTHLY, 0xFF8FA7E4, onClick = {})
+            }
+        }
+        compose.onNodeWithText("#日常").assertIsDisplayed()
+        compose.onNodeWithText("#月常 #家务").assertIsDisplayed()
+        compose.onNodeWithText("#周常").assertIsDisplayed()
+        compose.onNodeWithText("#月常").assertIsDisplayed()
+        compose.onNodeWithText("#自定义周", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("#自定义月", substring = true).assertDoesNotExist()
+    }
+
+    @Test fun habitWeekProgressShowsPeriodSuffixWithoutCustomTags() {
+        val week = LocalDate.of(2026, 9, 7)
+        content {
+            DaveHabitWeekPanel(
+                snapshot = HabitWeekSnapshot(week, listOf(
+                    habitItem("运动 #健康", week, HabitPeriod.WEEKLY, 4),
+                    habitItem("整理 #家务", week, HabitPeriod.MONTHLY, 1),
+                )),
+                today = week, onToggle = { _, _ -> }, onEdit = {},
+                onToggleSkip = { _, _ -> }, onEndFromWeek = { _, _ -> },
+            )
+        }
+        compose.onNodeWithText("0/4·周").assertIsDisplayed()
+        compose.onNodeWithText("0/1·月").assertIsDisplayed()
+        compose.onNodeWithText("#健康", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("#家务", substring = true).assertDoesNotExist()
+    }
+
+    @Test fun habitEditorReplacesSelectedRowBetweenNeighboursAndCancelRestoresIt() {
+        val week = LocalDate.of(2026, 9, 7)
+        val editing = androidx.compose.runtime.mutableStateOf<String?>("运动")
+        content {
+            DaveHabitWeekPanel(
+                snapshot = HabitWeekSnapshot(week, listOf(
+                    habitItem("读书", week), habitItem("运动", week), habitItem("练琴", week),
+                )),
+                today = week, onToggle = { _, _ -> }, onEdit = {},
+                onToggleSkip = { _, _ -> }, onEndFromWeek = { _, _ -> },
+                editingHabitId = editing.value,
+                habitEditor = { androidx.compose.material3.Text("编辑运动") },
+            )
+        }
+        compose.onNodeWithText("运动").assertDoesNotExist()
+        compose.onAllNodesWithText("编辑运动").assertCountEquals(1)
+        val before = compose.onNodeWithText("读书").getUnclippedBoundsInRoot()
+        val editor = compose.onNodeWithText("编辑运动").getUnclippedBoundsInRoot()
+        val after = compose.onNodeWithText("练琴").getUnclippedBoundsInRoot()
+        assertTrue("editor must occupy the selected row, not the footer", before.bottom <= editor.top && editor.bottom <= after.top)
+        compose.runOnIdle { editing.value = null }
+        compose.onNodeWithText("编辑运动").assertDoesNotExist()
+        compose.onNodeWithText("运动").assertIsDisplayed()
+    }
+
+    @Test fun currentHabitEditorDoesNotReplaceHistoricalRowWithSameId() {
+        val week = LocalDate.of(2026, 9, 7)
+        content {
+            DaveHabitWeekPanel(
+                snapshot = HabitWeekSnapshot(week.minusWeeks(1), listOf(habitItem("运动", week.minusWeeks(1)))),
+                today = week, onToggle = { _, _ -> }, onEdit = {},
+                onToggleSkip = { _, _ -> }, onEndFromWeek = { _, _ -> },
+                editingHabitId = "运动",
+                habitEditor = { androidx.compose.material3.Text("编辑运动") },
+            )
+        }
+        compose.onNodeWithText("编辑运动").assertDoesNotExist()
+        compose.onNodeWithText("运动").assertIsDisplayed()
+    }
+
+    private fun habitItem(title: String, week: LocalDate, period: HabitPeriod = HabitPeriod.DAILY, target: Int = 1) = HabitWeekItem(
+        id = title, title = title, color = 0xFF8FA7E4, startDate = week, position = 0,
+        weekStart = week, versionId = "$title-version", period = period, targetCount = target,
+        isSkipped = false, records = emptyList(),
+    )
 
     @Test fun habitCompletionDoesNotWaitForAnimationClock() {
         var completed = 0

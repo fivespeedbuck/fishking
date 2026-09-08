@@ -1,14 +1,14 @@
 {
-  "tag_name": "v0.1.1",
-  "name": "咸鱼大王 0.1.1 (Build 13)",
-  "body": "首个公开可用预览版：待办、习惯、多媒体日记、日记缩略图与 TAG、人生清单及加密备份。",
-  "html_url": "https://github.com/fivespeedbuck/fishking/releases/tag/v0.1.1",
+  "tag_name": "v0.1.2",
+  "name": "咸鱼大王 0.1.2 (Build 14)",
+  "body": "主页周/月习惯标签改为 #周常、#月常；习惯页进度显示 0/4·周、0/1·月；编辑习惯在原条目处展开，不再跳到列表底部。27 项交互测试和 13 项 App 测试通过，Lint 0 errors。此 APK 使用与 Build 13 相同的 Android Debug 签名，可覆盖升级；不是应用商店生产签名包。",
+  "html_url": "https://github.com/fivespeedbuck/fishking/releases/tag/v0.1.2",
   "assets": [
     {
-      "name": "fishking-0.1.1-build13-inner-tags-text-icon-20260908-debug.apk",
-      "browser_download_url": "https://github.com/fivespeedbuck/fishking/releases/download/v0.1.1/fishking-0.1.1-build13-inner-tags-text-icon-20260908-debug.apk",
+      "name": "fishking-0.1.2-build14-habit-labels-inline-edit-20260908-debug.apk",
+      "browser_download_url": "https://github.com/fivespeedbuck/fishking/releases/download/v0.1.2/fishking-0.1.2-build14-habit-labels-inline-edit-20260908-debug.apk",
       "size": 21477299,
-      "digest": "sha256:D14C0AA232A0DF2A82D58B2E40D7239A608A2CA2C1749C075BE501F01EF19E3A"
+      "digest": "sha256:D563A48D66B439BDE12CAB4C5083CD352A9978F98663E11A8567B96A79B0700C"
     }
   ]
 }
