@@ -22,6 +22,7 @@ import com.fishking.core.ui.DaveTodayButton
 import com.fishking.core.ui.DaveHomeViewButton
 import com.fishking.core.ui.FishKingSection
 import com.fishking.core.ui.FishKingTheme
+import com.fishking.core.ui.HabitWeekSkin
 import com.fishking.core.usecase.HomeRepository
 import com.fishking.core.usecase.HabitRepository
 import com.fishking.core.usecase.LifeRepository
@@ -93,7 +94,9 @@ private fun FishKingApp(
     val backup = remember { FishKingBackup(context, (context.applicationContext as FishKingApplication).database) }
     var settingsVisible by remember { mutableStateOf(false) }
     val settingsPreferences = remember { context.getSharedPreferences("fishking_settings", android.content.Context.MODE_PRIVATE) }
-    var paperTheme by remember { mutableStateOf(settingsPreferences.getString("skin", "dave") == "paper") }
+    var habitWeekSkin by remember {
+        mutableStateOf(HabitWeekSkin.fromPreference(settingsPreferences.getString("skin", null)))
+    }
     var presetTags by remember { mutableStateOf(settingsPreferences.getString("tags", "").orEmpty()) }
     var dataEpoch by remember { mutableStateOf(0) }
 
@@ -107,19 +110,19 @@ private fun FishKingApp(
         calendarVisible = false
     }, { calendarVisible = false }, if (selectedSection == FishKingSection.JOURNAL) journalDates else completedDates,
         if (selectedSection == FishKingSection.JOURNAL) "有日记" else "有已完成待办")
-    if (settingsVisible) SettingsPanel(backup, paperTheme, presetTags,
-        { paperTheme = it; settingsPreferences.edit().putString("skin", if (it) "paper" else "dave").apply() },
+    if (settingsVisible) SettingsPanel(backup, habitWeekSkin, presetTags,
+        { habitWeekSkin = it; settingsPreferences.edit().putString("skin", it.preferenceValue).apply() },
         { presetTags = it.split(Regex("[\\s#,，]+")).filter(String::isNotBlank).distinct().joinToString(" "); settingsPreferences.edit().putString("tags", presetTags).apply() },
         { settingsVisible = false }, onDataRestored = {
             (context as? androidx.activity.ComponentActivity)?.viewModelStore?.clear()
-            paperTheme = settingsPreferences.getString("skin", "dave") == "paper"
+            habitWeekSkin = HabitWeekSkin.fromPreference(settingsPreferences.getString("skin", null))
             presetTags = settingsPreferences.getString("tags", "").orEmpty()
             dataEpoch++; settingsVisible = false; journalEditing = false
         })
 
     androidx.compose.runtime.key(dataEpoch) {
     androidx.compose.runtime.CompositionLocalProvider(
-        com.fishking.core.ui.LocalPaperTheme provides paperTheme,
+        com.fishking.core.ui.LocalHabitWeekSkin provides habitWeekSkin,
         com.fishking.core.ui.LocalPresetTags provides presetTags.split(Regex("[\\s#,，]+" )).filter(String::isNotBlank),
     ) { DavePageFrame(
         selectedSection = selectedSection,

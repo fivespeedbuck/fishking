@@ -60,7 +60,7 @@ class FishKingBackup(private val context: Context, private val database: FishKin
                         tables.put(table, rows)
                     }
                     val snapshot = JSONObject().put("format", "fishking-backup-v1").put("schema", database.openHelper.writableDatabase.version)
-                        .put("tables", tables).put("settings", JSONObject().put("skin", preferences.getString("skin", "dave"))
+                        .put("tables", tables).put("settings", JSONObject().put("skin", preferences.getString("skin", "habit_unified"))
                             .put("tags", preferences.getString("tags", "")))
                     // Keep the logical rows and owned media on the same read snapshot.
                     // The settings screen blocks ordinary edits, but background saves
@@ -178,10 +178,13 @@ class FishKingBackup(private val context: Context, private val database: FishKin
                 } }
                 db.query("PRAGMA foreign_key_check").use { require(!it.moveToFirst()) { "导入关联校验失败" } }
                 val settings = document.getJSONObject("settings")
-                check(preferences.edit().putString("skin", settings.optString("skin", "dave")).putString("tags", settings.optString("tags")).commit())
+                val restoredSkin = com.fishking.core.ui.HabitWeekSkin
+                    .fromPreference(settings.optString("skin", "habit_unified"))
+                    .preferenceValue
+                check(preferences.edit().putString("skin", restoredSkin).putString("tags", settings.optString("tags")).commit())
             }
         } catch (failure: Throwable) {
-            preferences.edit().putString("skin", oldPreferences["skin"] as? String ?: "dave").putString("tags", oldPreferences["tags"] as? String ?: "").commit()
+            preferences.edit().putString("skin", oldPreferences["skin"] as? String ?: "habit_unified").putString("tags", oldPreferences["tags"] as? String ?: "").commit()
             copied.forEach { it.delete() }; throw failure
         } finally { discard(prepared) }
     }

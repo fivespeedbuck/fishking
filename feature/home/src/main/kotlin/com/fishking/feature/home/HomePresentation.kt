@@ -1,6 +1,5 @@
 package com.fishking.feature.home
 
-import com.fishking.core.model.HabitPeriod
 import com.fishking.core.model.HabitWeekItem
 import com.fishking.core.model.TodoOccurrence
 import com.fishking.core.model.TodoPriority
@@ -71,23 +70,28 @@ internal fun buildHomeDisplaySections(
     val habitItems = habits
         .asSequence()
         .filter { !date.isBefore(it.startDate) }
-        .filter { it.isScheduledOn(date) }
         .sortedWith(compareBy<HabitWeekItem> { it.position }.thenBy { it.id })
-        .map { habit ->
+        .mapNotNull { habit ->
+            val state = habit.dayState(date)
+            if (!state.shouldAppearOnHome) return@mapNotNull null
             val dayRecord = habit.records.firstOrNull { it.date == date }
-            val count = habit.effectiveCountFor(date)
-            val checkedOnDate = (dayRecord?.count ?: 0) > 0
+            val count = state.periodCount
+            val checkedOnDate = state.actualCount > 0
             HomeDisplayItem.Habit(
-                value = habit,
+                value = habit.copy(
+                    title = state.rule.title,
+                    color = state.rule.color,
+                    versionId = state.rule.id,
+                    period = state.rule.period,
+                    targetCount = state.rule.targetCount,
+                    scheduleDays = state.rule.scheduleDays,
+                    intervalDays = state.rule.intervalDays,
+                    scheduleStartDate = state.rule.scheduleStartDate,
+                ),
                 count = count,
                 checkedOnDate = checkedOnDate,
                 isBackfilled = dayRecord?.isBackfilled == true,
-                // Home groups reflect completion on this date, not the period quota.
-                // Keep the weekly/monthly total for the progress label.
-                isComplete = when (habit.period) {
-                    HabitPeriod.DAILY -> count >= habit.targetCount
-                    HabitPeriod.WEEKLY, HabitPeriod.MONTHLY -> checkedOnDate
-                },
+                isComplete = state.isCompleteOnDate,
             )
         }
         .toList()

@@ -43,6 +43,7 @@ import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.EventRepeat
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.LooksOne
@@ -53,6 +54,7 @@ import androidx.compose.material.icons.outlined.AddAlarm
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.Today
+import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.WbSunny
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.runtime.Composable
@@ -124,6 +126,7 @@ fun DaveHabitCard(
     onDragFinished: ((Offset) -> Unit)? = null,
     dragGroup: String = "habit-home",
     dragId: String = title,
+    intervalDays: Int = 1,
 ) {
     val progressColor = Color(color)
     val complete = if (period == HabitPeriod.DAILY) count >= targetCount else checkedOnDate
@@ -132,7 +135,7 @@ fun DaveHabitCard(
     val lift = rememberDaveLiftModifier(
         key = dragId,
         enabled = !readOnly && onDragFinished != null,
-        draw = { DaveHabitCard(title, count, targetCount, period, color, isBackfilled, checkedOnDate, {}, readOnly = true, dragId = dragId) },
+        draw = { DaveHabitCard(title, count, targetCount, period, color, isBackfilled, checkedOnDate, {}, readOnly = true, dragId = dragId, intervalDays = intervalDays) },
         onPosition = onDragPosition,
         onDrop = onDragFinished,
         group = dragGroup,
@@ -177,7 +180,7 @@ fun DaveHabitCard(
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("$count/$targetCount", color = progressColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Text((listOf(habitPeriodTag(period)) + titleParts.tags).distinct().joinToString(" ") { "#$it" }, color = progressColor, fontSize = 12.sp, maxLines = 1)
+                Text((listOf(habitPeriodTag(period, intervalDays)) + titleParts.tags).distinct().joinToString(" ") { "#$it" }, color = progressColor, fontSize = 12.sp, maxLines = 1)
                 if (isBackfilled) Text("补", color = DavePalette.Meta, fontSize = 10.sp)
             }
         }
@@ -667,10 +670,14 @@ private fun ReminderTimeChip(
 fun DaveHabitQuickOptions(
     period: HabitPeriod,
     targetCount: Int,
+    intervalDays: Int = 3,
     onPeriodSelected: (HabitPeriod) -> Unit,
     onTargetCountChanged: (Int) -> Unit,
+    onIntervalDaysChanged: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val intervalMode = period == HabitPeriod.EVERY_N_DAYS || period == HabitPeriod.AFTER_COMPLETION_N_DAYS
+    val stepperValue = if (intervalMode) intervalDays else targetCount
     Row(
         modifier = modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -697,23 +704,63 @@ fun DaveHabitQuickOptions(
         Spacer(Modifier.weight(1f))
         QuickIconOption(
             icon = Icons.Outlined.Remove,
-            description = "减少目标次数",
+            description = if (intervalMode) "减少间隔天数" else "减少目标次数",
             selected = false,
-            onClick = { if (targetCount > 1) onTargetCountChanged(targetCount - 1) },
+            onClick = {
+                if (stepperValue > 1) {
+                    if (intervalMode) onIntervalDaysChanged(stepperValue - 1)
+                    else onTargetCountChanged(stepperValue - 1)
+                }
+            },
         )
         Text(
-            text = targetCount.toString(),
+            text = stepperValue.toString(),
             color = DavePalette.Ink,
-            fontSize = 18.sp,
+            fontSize = if (stepperValue >= 100) 15.sp else 18.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(24.dp),
+            modifier = Modifier.width(34.dp),
+            maxLines = 1,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
         QuickIconOption(
             icon = Icons.Outlined.Add,
-            description = "增加目标次数",
+            description = if (intervalMode) "增加间隔天数" else "增加目标次数",
             selected = false,
-            onClick = { onTargetCountChanged(targetCount + 1) },
+            onClick = {
+                if (intervalMode) onIntervalDaysChanged(stepperValue + 1)
+                else onTargetCountChanged(stepperValue + 1)
+            },
+        )
+    }
+}
+
+/**
+ * The two interval modes live beside the TAG button instead of competing with the
+ * target stepper. The parent owns the TAG button so these controls intentionally
+ * wrap content rather than claiming a full row.
+ */
+@Composable
+fun DaveHabitCadenceOptions(
+    period: HabitPeriod,
+    onPeriodSelected: (HabitPeriod) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.wrapContentWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        QuickIconOption(
+            icon = Icons.Outlined.EventRepeat,
+            description = "每N天一次",
+            selected = period == HabitPeriod.EVERY_N_DAYS,
+            onClick = { onPeriodSelected(HabitPeriod.EVERY_N_DAYS) },
+        )
+        QuickIconOption(
+            icon = Icons.Outlined.Timer,
+            description = "完成后隔N天",
+            selected = period == HabitPeriod.AFTER_COMPLETION_N_DAYS,
+            onClick = { onPeriodSelected(HabitPeriod.AFTER_COMPLETION_N_DAYS) },
         )
     }
 }

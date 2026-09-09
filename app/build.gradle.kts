@@ -12,8 +12,8 @@ android {
         applicationId = "com.fishking.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 15
-        versionName = "0.1.3"
+        versionCode = 23
+        versionName = "0.1.11"
     }
 
     buildFeatures {

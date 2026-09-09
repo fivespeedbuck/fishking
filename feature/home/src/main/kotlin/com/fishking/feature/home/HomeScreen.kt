@@ -11,6 +11,9 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -51,6 +54,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -311,6 +315,7 @@ private const val PERMISSIONS_PREFERENCES = "fishking_permissions"
 private const val NOTIFICATION_PERMISSION_PROMPTED = "notification_permission_prompted"
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun HomeScreen(
     todos: List<TodoOccurrence>,
     habits: List<HabitWeekItem>,
@@ -361,14 +366,26 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
     onMoveTodo: (String, LocalDate) -> Unit = { _, _ -> },
 ) {
-    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    val imeVisible = imeBottom > 0
     val listState = rememberLazyListState()
+    val draftBringIntoViewRequester = remember { BringIntoViewRequester() }
+    var draftContentSize by remember { mutableStateOf(IntSize.Zero) }
     LaunchedEffect(draftVisible) {
         if (draftVisible) listState.animateScrollToItem(0)
     }
+    // The text field itself requests relocation when it gains focus, but the
+    // quick options are measured afterwards. Re-request the whole draft after
+    // its final layout and after the IME inset changes so its controls are not
+    // left behind the keyboard.
+    LaunchedEffect(draftVisible, imeBottom, draftContentSize) {
+        if (draftVisible && draftContentSize != IntSize.Zero) {
+            draftBringIntoViewRequester.bringIntoView()
+        }
+    }
     val currentDateChange by rememberUpdatedState(onDateChange)
     val currentDate by rememberUpdatedState(selectedDate)
-    val density = LocalDensity.current
     val thresholdPx = with(density) { 56.dp.toPx() }
     val maxPullPx = with(density) { 96.dp.toPx() }
     var edgePull by remember { mutableFloatStateOf(0f) }
@@ -445,7 +462,11 @@ fun HomeScreen(
         ) {
             if (draftVisible) {
                 item(key = "draft") {
-                    androidx.compose.foundation.layout.Column {
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier
+                            .bringIntoViewRequester(draftBringIntoViewRequester)
+                            .onSizeChanged { draftContentSize = it },
+                    ) {
                         DaveInlineDraftCard(
                             value = draftTitle,
                             onValueChange = onDraftChange,
@@ -491,6 +512,7 @@ fun HomeScreen(
                         is HomeDisplayItem.Habit -> DaveHabitCard(
                             title = entry.value.title, count = entry.count, targetCount = entry.value.targetCount,
                             period = entry.value.period, color = entry.value.color, isBackfilled = entry.isBackfilled,
+                            intervalDays = entry.value.intervalDays,
                             checkedOnDate = entry.checkedOnDate, onClick = { onToggleHabit(entry.value.id) },
                             modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
                             onDragFinished = {}, dragGroup = "home-open", dragId = entry.value.id,
@@ -564,6 +586,7 @@ fun HomeScreen(
                         DaveHabitCard(
                             title = entry.value.title, count = entry.count, targetCount = entry.value.targetCount,
                             period = entry.value.period, color = entry.value.color, isBackfilled = entry.isBackfilled,
+                            intervalDays = entry.value.intervalDays,
                             checkedOnDate = entry.checkedOnDate, onClick = { onToggleHabit(entry.value.id) },
                             modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
                         )

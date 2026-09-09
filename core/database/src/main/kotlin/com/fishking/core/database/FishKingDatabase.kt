@@ -33,7 +33,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         JournalTodoCrossRef::class,
         JournalTagCrossRef::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 @TypeConverters(DatabaseConverters::class)
@@ -160,6 +160,24 @@ abstract class FishKingDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v7 keeps the legacy SQLite name `effectiveFromWeek` for a low-risk additive
+         * migration, but it is now interpreted as a natural date throughout Kotlin/SQL.
+         */
+        @JvmField
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE habit_versions ADD COLUMN intervalDays INTEGER NOT NULL DEFAULT 1")
+                database.execSQL("ALTER TABLE habit_versions ADD COLUMN scheduleStartDate INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("UPDATE habit_versions SET scheduleStartDate = effectiveFromWeek")
+                database.execSQL("ALTER TABLE habit_day_records ADD COLUMN affectsScheduleAnchor INTEGER NOT NULL DEFAULT 1")
+                database.execSQL(
+                    "UPDATE habit_day_records SET affectsScheduleAnchor = " +
+                        "CASE WHEN isBackfilled = 1 THEN 0 ELSE 1 END",
+                )
+            }
+        }
+
         fun create(context: Context): FishKingDatabase =
             Room.databaseBuilder(
                 context.applicationContext,
@@ -171,6 +189,7 @@ abstract class FishKingDatabase : RoomDatabase() {
                 MIGRATION_3_4,
                 MIGRATION_4_5,
                 MIGRATION_5_6,
+                MIGRATION_6_7,
             )
                 .build()
     }

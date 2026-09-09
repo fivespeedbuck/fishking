@@ -134,10 +134,11 @@ class RoomHabitRepositoryTest {
         assertEquals(2, past.targetCount)
         assertEquals("刷牙", past.title)
         assertEquals(0xFF8FA7E4, past.color)
-        assertEquals(HabitPeriod.WEEKLY, future.period)
-        assertEquals(4, future.targetCount)
-        assertEquals("新刷牙", future.title)
-        assertEquals(0xFFED8FAE, future.color)
+        // A Wednesday edit no longer rewrites Mon/Tue. Per-day lookup exposes the new rule.
+        assertEquals(HabitPeriod.DAILY, future.ruleOn(nextWeek.plusDays(1)).period)
+        assertEquals(HabitPeriod.WEEKLY, future.ruleOn(nextWeek.plusDays(2)).period)
+        assertEquals(4, future.ruleOn(nextWeek.plusDays(2)).targetCount)
+        assertEquals("新刷牙", future.ruleOn(nextWeek.plusDays(2)).title)
     }
 
     @Test
@@ -266,15 +267,20 @@ class RoomHabitRepositoryTest {
     }
 
     @Test
-    fun scheduledWeeklyHabitAcceptsOnlySelectedWeekdays() = runTest {
+    fun scheduledWeeklyHabitAllowsOffPlanFactsAndEarlyFactConsumesFirstCandidate() = runTest {
         val id = repository.createHabit("训练 #健康", 0xFF8FA7E4, currentWeek, HabitPeriod.WEEKLY, 1, setOf(1, 3, 5))
-        assertEquals(1, repository.toggleCheckIn(id, currentWeek))
-        assertNull(repository.toggleCheckIn(id, currentWeek.plusDays(1)))
-        assertEquals(1, repository.toggleCheckIn(id, currentWeek.plusDays(2)))
+        assertEquals(1, repository.toggleCheckIn(id, currentWeek.plusDays(1)))
         val item = repository.observeWeek(currentWeek).first().single()
         assertEquals(setOf(1, 3, 5), item.scheduleDays)
-        assertTrue(item.isScheduledOn(currentWeek.plusDays(4)))
-        assertFalse(item.isScheduledOn(currentWeek.plusDays(3)))
+        assertFalse(item.isScheduledOn(currentWeek.plusDays(2))) // Tue fact consumed Wed slot.
+        assertFalse(item.isScheduledOn(currentWeek.plusDays(4))) // target reached, no Fri nag.
+    }
+
+    @Test
+    fun habitCreatedMidweekCanStillSkipItsCurrentWeek() = runTest {
+        val id = createHabit(HabitPeriod.DAILY, 1, startDate = today)
+        assertEquals(true, repository.toggleWeekSkip(id, currentWeek))
+        assertTrue(repository.observeWeek(currentWeek).first().single().isSkipped)
     }
 
     @Test
@@ -282,10 +288,28 @@ class RoomHabitRepositoryTest {
         val start = LocalDate.of(2026, 9, 1)
         val id = repository.createHabit("交账单", 0xFFF3CB6C, start, HabitPeriod.MONTHLY, 1, setOf(4, 15))
         assertEquals(1, repository.toggleCheckIn(id, LocalDate.of(2026, 9, 4)))
-        assertNull(repository.toggleCheckIn(id, LocalDate.of(2026, 9, 5)))
+        assertEquals(1, repository.toggleCheckIn(id, LocalDate.of(2026, 9, 3)))
         val item = repository.observeWeek(currentWeek).first().single()
         assertEquals(HabitPeriod.MONTHLY, item.period)
         assertEquals(setOf(4, 15), item.scheduleDays)
+    }
+
+    @Test
+    fun fixedCadenceKeepsCalendarSlotsWhileDynamicCadenceReanchorsOnlyRealTodayFacts() = runTest {
+        val start = LocalDate.of(2026, 9, 1)
+        val fixed = repository.createHabitWithSchedule("固定", 1, start, HabitPeriod.EVERY_N_DAYS, 1, emptySet(), 3, start)
+        val dynamic = repository.createHabitWithSchedule("间隔", 2, start, HabitPeriod.AFTER_COMPLETION_N_DAYS, 1, emptySet(), 3, start)
+
+        assertEquals(LocalDate.of(2026, 9, 1), repository.previewCheckIn(fixed, start)?.nextDueDate)
+        assertEquals(1, repository.toggleCheckIn(fixed, start.plusDays(1))) // early consumes Sep 1 slot
+        assertEquals(LocalDate.of(2026, 9, 4), repository.previewCheckIn(fixed, start.plusDays(1))?.nextDueDate)
+
+        assertEquals(1, repository.toggleCheckIn(dynamic, today))
+        assertEquals(today.plusDays(3), repository.previewCheckIn(dynamic, today)?.nextDueDate)
+        assertEquals(1, repository.toggleCheckIn(dynamic, start.plusDays(1))) // historical backfill
+        assertEquals(today.plusDays(3), repository.previewCheckIn(dynamic, today)?.nextDueDate)
+        repository.setCheckInAffectsScheduleAnchor(dynamic, start.plusDays(1), true)
+        assertEquals(today.plusDays(3), repository.previewCheckIn(dynamic, today)?.nextDueDate) // earlier anchor cannot replace latest
     }
 
     private suspend fun createHabit(

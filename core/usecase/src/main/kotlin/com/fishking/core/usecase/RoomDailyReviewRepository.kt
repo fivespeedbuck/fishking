@@ -23,17 +23,22 @@ class RoomDailyReviewRepository(
                 .mapNotNull { habit ->
                     val record = habit.records.firstOrNull { it.date == date } ?: return@mapNotNull null
                     if (record.count <= 0) return@mapNotNull null
+                    val state = habit.dayState(date)
                     HabitDaySummary(
                         habitId = habit.id,
-                        title = habit.title,
-                        color = habit.color,
+                        title = state.rule.title,
+                        color = state.rule.color,
                         date = date,
                         count = record.count,
-                        targetCount = habit.targetCount,
-                        period = habit.period,
+                        targetCount = state.rule.targetCount,
+                        period = state.rule.period,
                         isBackfilled = record.isBackfilled,
                         position = habit.position,
-                        displayCount = if (habit.period == com.fishking.core.model.HabitPeriod.WEEKLY) habit.weeklyEffectiveDayCount else record.count,
+                        displayCount = when (state.rule.period) {
+                            com.fishking.core.model.HabitPeriod.DAILY -> record.count
+                            else -> state.periodCount
+                        },
+                        intervalDays = state.rule.intervalDays,
                     )
                 }
                 .sortedBy(HabitDaySummary::position)

@@ -4,6 +4,7 @@ import androidx.room.testing.MigrationTestHelper
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -208,6 +209,39 @@ class FishKingDatabaseMigrationTest {
         migrated.query("SELECT COUNT(*) FROM journal_tag_cross_ref").use {
             it.moveToFirst()
             assertEquals(0, it.getInt(0))
+        }
+        migrated.close()
+    }
+
+    @Test
+    fun migration6To7PreservesHabitRulesAndMakesLegacyBackfillsNonAnchors() {
+        val name = "fishking-habit-n-day-migration"
+        helper.createDatabase(name, 6).apply {
+            execSQL("INSERT INTO habits VALUES ('daily', '刷牙', 1, 20000, NULL, 0, 10, 10, NULL)")
+            execSQL("INSERT INTO habits VALUES ('weekly', '锻炼', 2, 20000, NULL, 1, 10, 10, NULL)")
+            execSQL("INSERT INTO habits VALUES ('monthly', '洗床单', 3, 20000, NULL, 2, 10, 10, NULL)")
+            execSQL("INSERT INTO habit_versions VALUES ('daily-v', 'daily', 20000, NULL, '刷牙', 1, 'DAILY', 2, '', 10)")
+            execSQL("INSERT INTO habit_versions VALUES ('weekly-v', 'weekly', 20000, NULL, '锻炼', 2, 'WEEKLY', 4, '1,3,6', 10)")
+            execSQL("INSERT INTO habit_versions VALUES ('monthly-v', 'monthly', 20000, NULL, '洗床单', 3, 'MONTHLY', 1, '15', 10)")
+            execSQL("INSERT INTO habit_day_records VALUES ('daily', 20001, 1, 0, 11)")
+            execSQL("INSERT INTO habit_day_records VALUES ('weekly', 20002, 1, 1, 12)")
+            execSQL("INSERT INTO habit_day_records VALUES ('monthly', 20003, 1, 0, 13)")
+            close()
+        }
+        val migrated = helper.runMigrationsAndValidate(name, 7, true, FishKingDatabase.MIGRATION_6_7)
+        migrated.query("SELECT period, targetCount, scheduleDays, intervalDays, scheduleStartDate FROM habit_versions ORDER BY habitId").use {
+            assertEquals(3, it.count)
+            while (it.moveToNext()) {
+                assertTrue(it.getString(0) in setOf("DAILY", "WEEKLY", "MONTHLY"))
+                assertTrue(it.getInt(1) > 0)
+                assertEquals(1, it.getInt(3))
+                assertEquals(20000L, it.getLong(4))
+            }
+        }
+        migrated.query("SELECT habitId, isBackfilled, affectsScheduleAnchor FROM habit_day_records ORDER BY habitId").use {
+            it.moveToFirst(); assertEquals("daily", it.getString(0)); assertEquals(1, it.getInt(2))
+            it.moveToNext(); assertEquals("monthly", it.getString(0)); assertEquals(1, it.getInt(2))
+            it.moveToNext(); assertEquals("weekly", it.getString(0)); assertEquals(1, it.getInt(1)); assertEquals(0, it.getInt(2))
         }
         migrated.close()
     }

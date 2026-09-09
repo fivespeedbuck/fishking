@@ -282,6 +282,7 @@ fun DaveCompactHabitCard(
     dragId: String = title,
     dragGroup: String = "habit-home",
     onDragFinished: ((Offset) -> Unit)? = null,
+    intervalDays: Int = 1,
 ) {
     val progressColor = Color(color)
     val complete = if (period == HabitPeriod.DAILY) count >= targetCount else checkedOnDate
@@ -290,7 +291,7 @@ fun DaveCompactHabitCard(
     val lift = rememberDaveLiftModifier(
         key = dragId,
         enabled = onDragFinished != null,
-        draw = { DaveCompactHabitCard(title, count, targetCount, period, color, checkedOnDate, {}, dragId = dragId) },
+        draw = { DaveCompactHabitCard(title, count, targetCount, period, color, checkedOnDate, {}, dragId = dragId, intervalDays = intervalDays) },
         onPosition = null,
         onDrop = onDragFinished,
         group = dragGroup,
@@ -315,7 +316,7 @@ fun DaveCompactHabitCard(
             DaveTitle(titleParts.title, color = progressColor, fontSize = 14.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, textDecoration = if (visuallyComplete) TextDecoration.LineThrough else TextDecoration.None)
             Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(5.dp)) {
                 Text("$count/$targetCount", color = progressColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text("#${habitPeriodTag(period)}", color = progressColor, fontSize = 9.sp, maxLines = 1)
+                Text("#${habitPeriodTag(period, intervalDays)}", color = progressColor, fontSize = 9.sp, maxLines = 1)
             }
         }
         if (visuallyComplete) Text("CLEAR", color = DavePalette.Completed, fontSize = 8.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 5.dp).rotate(7f))

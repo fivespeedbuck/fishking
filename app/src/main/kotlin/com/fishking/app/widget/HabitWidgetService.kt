@@ -63,11 +63,7 @@ private class HabitWidgetFactory(private val context: android.content.Context) :
     override fun hasStableIds(): Boolean = true
 }
 
-internal fun widgetHabitCount(item: HabitWeekItem, date: LocalDate): Int = when (item.period) {
-    HabitPeriod.DAILY -> item.countOn(date)
-    HabitPeriod.WEEKLY -> item.weeklyEffectiveDayCount
-    HabitPeriod.MONTHLY -> item.countOn(date)
-}
+internal fun widgetHabitCount(item: HabitWeekItem, date: LocalDate): Int = item.dayState(date).periodCount
 
 internal enum class TodayWidgetItemKind { TODO, HABIT }
 
@@ -109,14 +105,16 @@ internal fun buildTodayWidgetItems(
     }
     val habitItems = habits
         .filter { !date.isBefore(it.startDate) }
-        .map { habit ->
-            val count = widgetHabitCount(habit, date)
-            val completed = count >= habit.targetCount
+        .mapNotNull { habit ->
+            val state = habit.dayState(date)
+            if (!state.shouldAppearOnHome) return@mapNotNull null
+            val count = state.periodCount
+            val completed = state.isCompleteOnDate
             TodayWidgetItem(
                 kind = TodayWidgetItemKind.HABIT,
                 id = habit.id,
-                title = habit.title,
-                progress = "$count/${habit.targetCount}",
+                title = state.rule.title,
+                progress = "$count/${state.rule.targetCount}",
                 stripeColor = if (completed) WIDGET_COMPLETED else WIDGET_HABIT,
                 completed = completed,
                 position = habit.position,

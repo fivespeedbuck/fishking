@@ -79,6 +79,24 @@ class HomePresentationTest {
     }
 
     @Test
+    fun offPlanCompletionStillAppearsInTodaysCompletedSection() {
+        val checkedOffPlan = habit(
+            id = "wed-sat",
+            count = 1,
+            target = 2,
+            period = HabitPeriod.WEEKLY,
+            scheduleDays = setOf(3, 6),
+        )
+        val checked = buildHomeDisplaySections(date, emptyList(), listOf(checkedOffPlan))
+        assertEquals("wed-sat", checked.completedHabits.single().value.id)
+
+        val uncheckedOffPlan = checkedOffPlan.copy(records = emptyList())
+        val unchecked = buildHomeDisplaySections(date, emptyList(), listOf(uncheckedOffPlan))
+        assertTrue(unchecked.openHabits.isEmpty())
+        assertTrue(unchecked.completedHabits.isEmpty())
+    }
+
+    @Test
     fun undoingPeriodicCheckReturnsHabitAboveDividerAndPreservesOtherDates() {
         for (period in listOf(HabitPeriod.WEEKLY, HabitPeriod.MONTHLY)) {
             val before = habit("periodic", 2, 4, period)
@@ -92,13 +110,12 @@ class HomePresentationTest {
     }
 
     @Test
-    fun periodQuotaDoesNotMarkAnUncheckedDateCompleted() {
+    fun periodQuotaHidesUncheckedFutureDaysAfterTargetIsMet() {
         for (period in listOf(HabitPeriod.WEEKLY, HabitPeriod.MONTHLY)) {
             val completed = habit("periodic", 4, 4, period)
             val sections = buildHomeDisplaySections(date.plusDays(1), emptyList(), listOf(completed))
             assertTrue(sections.completedHabits.isEmpty())
-            assertEquals(4, sections.openHabits.single().count)
-            assertFalse(sections.openHabits.single().checkedOnDate)
+            assertTrue(sections.openHabits.isEmpty())
         }
     }
 
@@ -108,6 +125,17 @@ class HomePresentationTest {
         assertFalse(partial.openHabits.single().isComplete)
         val complete = buildHomeDisplaySections(date, emptyList(), listOf(habit("daily", 2, 2)))
         assertTrue(complete.completedHabits.single().isComplete)
+    }
+
+    @Test
+    fun nDayHabitsUseDueStateAndActualCompletionForHomeGrouping() {
+        for (period in listOf(HabitPeriod.EVERY_N_DAYS, HabitPeriod.AFTER_COMPLETION_N_DAYS)) {
+            val due = buildHomeDisplaySections(date, emptyList(), listOf(habit("n-day", 0, 1, period)))
+            assertEquals("n-day", due.openHabits.single().value.id)
+
+            val done = buildHomeDisplaySections(date, emptyList(), listOf(habit("n-day", 1, 1, period)))
+            assertEquals("n-day", done.completedHabits.single().value.id)
+        }
     }
 
     private fun todo(
@@ -133,6 +161,7 @@ class HomePresentationTest {
         target: Int,
         period: HabitPeriod = HabitPeriod.DAILY,
         position: Long = 0L,
+        scheduleDays: Set<Int> = emptySet(),
     ) = HabitWeekItem(
         id = id,
         title = id,
@@ -143,12 +172,16 @@ class HomePresentationTest {
         versionId = "v-$id",
         period = period,
         targetCount = target,
+        scheduleDays = scheduleDays,
         isSkipped = false,
         records = when (period) {
             HabitPeriod.DAILY -> listOf(HabitDayRecord(id, date, count, false, Instant.EPOCH))
             HabitPeriod.WEEKLY, HabitPeriod.MONTHLY -> (0 until count).map { offset ->
                 HabitDayRecord(id, date.minusDays(offset.toLong()), 1, false, Instant.EPOCH)
             }
+            HabitPeriod.EVERY_N_DAYS,
+            HabitPeriod.AFTER_COMPLETION_N_DAYS,
+            -> if (count > 0) listOf(HabitDayRecord(id, date, 1, false, Instant.EPOCH)) else emptyList()
         },
     )
 }

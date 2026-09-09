@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.semantics.Role
@@ -82,26 +83,48 @@ fun DaveHabitWeekPanel(
     habitEditor: (@Composable () -> Unit)? = null,
 ) {
     val isCurrentWeek = !today.isBefore(snapshot.weekStart) && !today.isAfter(snapshot.weekEnd)
+    val skin = LocalHabitWeekSkin.current
+    val unified = skin == HabitWeekSkin.UNIFIED_CARD
+    val panelShape = RoundedCornerShape(13.dp)
+    val todayOffset = if (isCurrentWeek) today.toEpochDay() - snapshot.weekStart.toEpochDay() else -1L
     androidx.compose.runtime.CompositionLocalProvider(LocalDaveReorderCommit provides onReorderHabit) {
-    Column(
+    Box(
         modifier = modifier
             .fillMaxWidth()
+            .clip(panelShape)
             .background(
-                if (isCurrentWeek) DavePalette.CurrentWeek else DavePalette.OtherWeek,
-                RoundedCornerShape(13.dp),
+                if (unified) DavePalette.Card
+                else if (isCurrentWeek) DavePalette.CurrentWeek else DavePalette.OtherWeek,
             )
-            .border(1.dp, DavePalette.WeekBorder, RoundedCornerShape(13.dp))
-            .padding(vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .then(
+                if (unified && todayOffset in 0L..6L) Modifier.drawBehind {
+                    val horizontalInset = 10.dp.toPx()
+                    val titleWidth = 92.dp.toPx()
+                    val dayWidth = (size.width - horizontalInset * 2f - titleWidth) / 7f
+                    drawRect(
+                        color = Color(0xFFEAF7F0),
+                        topLeft = androidx.compose.ui.geometry.Offset(
+                            horizontalInset + titleWidth + dayWidth * todayOffset.toFloat(),
+                            0f,
+                        ),
+                        size = androidx.compose.ui.geometry.Size(dayWidth, size.height),
+                    )
+                } else Modifier,
+            )
+            .border(1.dp, DavePalette.WeekBorder, panelShape),
     ) {
-        WeekDayHeader(snapshot.weekStart, isCurrentWeek)
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+        verticalArrangement = if (unified) Arrangement.Top else Arrangement.spacedBy(8.dp),
+    ) {
+        WeekDayHeader(snapshot.weekStart, today, isCurrentWeek, unified)
         if (recurringTodos.isNotEmpty()) {
             recurringTodos
                 .groupBy { it.seriesId ?: it.id }
                 .values
                 .sortedBy { series -> series.minOf { it.position } }
                 .forEach { series ->
-                    RecurringTodoWeekRow(series, snapshot.weekStart, today, onToggleRecurringTodo, onEditRecurringTodo)
+                    RecurringTodoWeekRow(series, snapshot.weekStart, today, onToggleRecurringTodo, onEditRecurringTodo, unified)
                 }
         }
         snapshot.items.forEach { habit ->
@@ -120,11 +143,13 @@ fun DaveHabitWeekPanel(
                         historical = !isCurrentWeek,
                         onDeleteHabit = onDeleteHabit,
                         reorderEnabled = isCurrentWeek && editingHabitId == null,
+                        unified = unified,
                     )
                 }
             }
         }
         footer?.invoke()
+    }
     }
     }
 }
@@ -141,6 +166,7 @@ private fun RecurringTodoWeekRow(
     today: LocalDate,
     onToggle: (String) -> Unit,
     onEdit: (TodoOccurrence) -> Unit,
+    unified: Boolean,
 ) {
     val ordered = occurrences.sortedBy { it.displayDate }
     val representative = ordered.first()
@@ -149,7 +175,8 @@ private fun RecurringTodoWeekRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(DavePalette.Card)
+            .height(66.dp)
+            .background(if (unified) Color.Transparent else DavePalette.Card)
             .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -198,7 +225,7 @@ private fun RecurringTodoWeekRow(
 }
 
 @Composable
-private fun WeekDayHeader(weekStart: LocalDate, isCurrentWeek: Boolean) {
+private fun WeekDayHeader(weekStart: LocalDate, today: LocalDate, isCurrentWeek: Boolean, unified: Boolean) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -211,11 +238,30 @@ private fun WeekDayHeader(weekStart: LocalDate, isCurrentWeek: Boolean) {
         repeat(7) { offset ->
             val date = weekStart.plusDays(offset.toLong())
             Column(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(if (!unified && date == today) DavePalette.HeaderGreen.copy(alpha = .13f) else Color.Transparent)
+                    .padding(vertical = 2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(date.dayOfWeek.shortChinese(), color = DavePalette.Meta, fontSize = 10.sp)
-                Text(date.dayOfMonth.toString(), color = DavePalette.Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Box(contentAlignment = Alignment.BottomEnd) {
+                    Text(
+                        date.dayOfMonth.toString(),
+                        color = if (date == today) DavePalette.HeaderGreenDark else DavePalette.Ink,
+                        fontSize = 12.sp,
+                        fontWeight = if (date == today) FontWeight.ExtraBold else FontWeight.Bold,
+                        modifier = Modifier.padding(end = if (date == today) 7.dp else 0.dp),
+                    )
+                    if (date == today) Text(
+                        "今",
+                        color = DavePalette.HeaderGreenDark,
+                        fontSize = 7.sp,
+                        lineHeight = 7.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
         }
     }
@@ -233,8 +279,9 @@ private fun HabitWeekRow(
     historical: Boolean,
     onDeleteHabit: ((HabitWeekItem) -> Unit)? = null,
     reorderEnabled: Boolean = false,
+    unified: Boolean = false,
+    liftedPreview: Boolean = false,
 ) {
-    val visibleTitle = remember(habit.title) { splitDaveTaskText(habit.title).title }
     val actionWidthDp = if (allowActions) 162.dp else 54.dp
     val density = androidx.compose.ui.platform.LocalDensity.current
     val actionWidthPx = with(density) { actionWidthDp.toPx() }
@@ -260,6 +307,8 @@ private fun HabitWeekRow(
                 onEndFromWeek = { _, _ -> },
                 historical = historical,
                 reorderEnabled = false,
+                unified = unified,
+                liftedPreview = true,
             )
         },
         onPosition = null,
@@ -294,8 +343,12 @@ private fun HabitWeekRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(66.dp)
                 .offset { IntOffset(offsetX.roundToInt(), 0) }
-                .background(DavePalette.Card)
+                // Unified rows stay transparent at rest so the one-piece today stripe
+                // remains continuous. While swiping/lifting they become an opaque card,
+                // preventing unrevealed action buttons from showing through the circles.
+                .background(if (!unified || liftedPreview || offsetX < -1f) DavePalette.Card else Color.Transparent)
                 .then(
                     if (allowActions || onDeleteHabit != null) Modifier.pointerInput(habit.id, habit.weekStart) {
                         detectHorizontalDragGestures(
@@ -313,33 +366,62 @@ private fun HabitWeekRow(
                 .padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            val displayDate = minOf(today, habit.weekStart.plusDays(6))
+            val displayRule = habit.ruleOn(displayDate)
+            val visibleTitle = remember(displayRule.title) { splitDaveTaskText(displayRule.title).title }
             Column(modifier = Modifier.width(92.dp).padding(end = 3.dp)) {
                 Text(
                     text = visibleTitle,
-                    color = Color(habit.color).copy(alpha = if (historical) .70f else 1f),
+                    color = Color(displayRule.color).copy(alpha = if (historical) .70f else 1f),
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 2,
                     textDecoration = if (habit.isSkipped) TextDecoration.LineThrough else TextDecoration.None,
                     modifier = Modifier.padding(end = 2.dp),
                 )
-                if (habit.period != HabitPeriod.DAILY) Text(
-                    text = habitPeriodProgress(habit.effectiveCountFor(habit.weekStart.plusDays(3)), habit.targetCount, habit.period),
-                    color = Color(habit.color), fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                if (displayRule.period != HabitPeriod.DAILY) Text(
+                    text = when (displayRule.period) {
+                        HabitPeriod.WEEKLY,
+                        HabitPeriod.MONTHLY,
+                        -> habitPeriodProgress(habit.effectiveCountFor(displayDate), displayRule.targetCount, displayRule.period)
+                        HabitPeriod.EVERY_N_DAYS -> "每${displayRule.intervalDays}天"
+                        HabitPeriod.AFTER_COMPLETION_N_DAYS -> "间隔${displayRule.intervalDays}天"
+                        HabitPeriod.DAILY -> ""
+                    },
+                    color = Color(displayRule.color), fontSize = 12.sp, fontWeight = FontWeight.Bold,
                 )
             }
             repeat(7) { offset ->
                 val date = habit.weekStart.plusDays(offset.toLong())
                 val record = habit.records.firstOrNull { it.date == date }
-                val enabled = !date.isAfter(today) && habit.isScheduledOn(date)
+                val state = habit.dayState(date)
+                val cutoff = minOf(today, when (state.rule.period) {
+                    HabitPeriod.MONTHLY -> java.time.YearMonth.from(date).atEndOfMonth()
+                    else -> habit.weekStart.plusDays(6)
+                })
+                val periodTargetReached = when (state.rule.period) {
+                    HabitPeriod.WEEKLY -> cutoff >= habit.weekStart && habit.records.count {
+                        it.date in habit.weekStart..cutoff && it.count > 0
+                    } >= state.rule.targetCount
+                    HabitPeriod.MONTHLY -> cutoff >= java.time.YearMonth.from(date).atDay(1) && habit.records.count {
+                        java.time.YearMonth.from(it.date) == java.time.YearMonth.from(date) &&
+                            !it.date.isAfter(cutoff) && it.count > 0
+                    } >= state.rule.targetCount
+                    else -> false
+                }
+                val planned = (state.isPlannedDate || state.isDue) && !(periodTargetReached && state.actualCount == 0)
+                val enabled = !date.isAfter(today)
                 HabitDayCircle(
-                    period = habit.period,
-                    count = record?.count ?: 0,
-                    targetCount = habit.targetCount,
-                    color = Color(habit.color),
+                    period = state.rule.period,
+                    count = state.actualCount,
+                    targetCount = state.rule.targetCount,
+                    color = Color(state.rule.color),
                     isBackfilled = record?.isBackfilled == true,
                     enabled = enabled,
-                    description = "${habit.title} ${date.monthValue}月${date.dayOfMonth}日",
+                    planned = planned,
+                    isToday = date == today,
+                    individualTodayHighlight = !unified,
+                    description = "${state.rule.title} ${date.monthValue}月${date.dayOfMonth}日",
                     onClick = { onToggle(habit.id, date) },
                     modifier = Modifier.weight(1f),
                 )
@@ -395,6 +477,9 @@ private fun HabitDayCircle(
     color: Color,
     isBackfilled: Boolean,
     enabled: Boolean,
+    planned: Boolean,
+    isToday: Boolean,
+    individualTodayHighlight: Boolean,
     description: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -405,37 +490,64 @@ private fun HabitDayCircle(
         // Each day circle only represents whether that real date was checked.
         HabitPeriod.WEEKLY -> count > 0
         HabitPeriod.MONTHLY -> count > 0
+        HabitPeriod.EVERY_N_DAYS,
+        HabitPeriod.AFTER_COMPLETION_N_DAYS,
+        -> count > 0
     }
-    val outline = if (count > 0) color else DavePalette.Ink.copy(alpha = .28f)
+    val emptyMark = !planned && count == 0
+    val visualColor = color
     Box(
-        modifier = modifier.height(58.dp),
+        modifier = modifier
+            .height(58.dp)
+            .clip(RoundedCornerShape(7.dp))
+            .background(if (individualTodayHighlight && isToday) DavePalette.HeaderGreen.copy(alpha = .10f) else Color.Transparent),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier.size(38.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(29.dp)
-                    .clip(CircleShape)
-                    .then(
-                        Modifier.border(2.dp, color, CircleShape),
-                    )
-                    .clickable(enabled = enabled, role = Role.Checkbox, onClick = onClick)
-                    .semantics {
+            val targetModifier = Modifier
+                .align(Alignment.Center)
+                .size(if (emptyMark) 33.dp else 29.dp)
+                .clickable(enabled = enabled, role = Role.Checkbox, onClick = onClick)
+                .semantics {
                         contentDescription = buildString {
                             append(description)
                             if (period == HabitPeriod.DAILY) append(" $count/$targetCount")
                             else append(if (count > 0) " 已打卡" else " 未打卡")
+                            if (!planned && count == 0) append(" 空集")
                             if (isBackfilled) append(" 补记")
                         }
                         if (!enabled) disabled()
-                    },
+                    }
+            Box(
+                modifier = if (emptyMark) targetModifier
+                else targetModifier.clip(CircleShape).border(2.dp, visualColor, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                if (complete) DaveDrawnCheck(color, Modifier.size(23.dp))
+                if (complete) {
+                    DaveDrawnCheck(color, Modifier.size(23.dp))
+                } else if (!planned) {
+                    Canvas(Modifier.size(33.dp)) {
+                        val emptyColor = color.copy(alpha = .75f)
+                        val outlineStroke = 2.dp.toPx()
+                        val slashRadius = 16.5.dp.toPx()
+                        val slashAxis = slashRadius / kotlin.math.sqrt(2f)
+                        drawCircle(
+                            color = emptyColor,
+                            radius = 13.5.dp.toPx(),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(outlineStroke),
+                        )
+                        drawLine(
+                            color = emptyColor,
+                            start = androidx.compose.ui.geometry.Offset(center.x - slashAxis, center.y + slashAxis),
+                            end = androidx.compose.ui.geometry.Offset(center.x + slashAxis, center.y - slashAxis),
+                            strokeWidth = 3.dp.toPx(),
+                            cap = StrokeCap.Round,
+                        )
+                    }
+                }
             }
             if (period == HabitPeriod.DAILY) {
                 Text(
@@ -452,7 +564,7 @@ private fun HabitDayCircle(
                     textAlign = TextAlign.Center,
                 )
             }
-            if (isBackfilled && period == HabitPeriod.WEEKLY) {
+            if (isBackfilled && period != HabitPeriod.DAILY) {
                 Text(
                     text = "补",
                     color = DavePalette.Meta,

@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
@@ -61,8 +63,17 @@ fun LifeScreen(
         }
     }.sortedWith(compareBy({ it.event.occurredOn }, { it.event.createdAt }, { it.event.position }))
 
+    val listState = rememberLazyListState()
+
+    // The draft is always the first lazy item. Returning to index zero is
+    // necessary when it was opened from the floating action button after the
+    // user had browsed existing goals or the timeline.
+    LaunchedEffect(draftVisible) {
+        if (draftVisible) listState.animateScrollToItem(0)
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
             if (draftVisible) {
                 item(key = "life-draft") {
                     Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) {

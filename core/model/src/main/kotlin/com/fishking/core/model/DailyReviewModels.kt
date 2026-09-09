@@ -13,6 +13,7 @@ data class HabitDaySummary(
     val isBackfilled: Boolean,
     val position: Long,
     val displayCount: Int = count,
+    val intervalDays: Int = 1,
 )
 
 data class DailyReview(

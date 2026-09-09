@@ -1107,6 +1107,7 @@ fun DaveDailyReviewPanel(
                 color = habit.color,
                 isBackfilled = habit.isBackfilled,
                 checkedOnDate = habit.count > 0,
+                intervalDays = habit.intervalDays,
                 onClick = {},
                 readOnly = true,
             )
@@ -1119,6 +1120,6 @@ fun DaveDailyReviewPanel(
         ).forEach { todo ->
             DaveTaskCard(todo = todo, onToggleCompletion = {}, readOnly = true)
         }
-        checkedHabits.filter { it.period == HabitPeriod.WEEKLY || it.count >= it.targetCount }.forEach { HabitSummary(it) }
+        checkedHabits.filter { it.period != HabitPeriod.DAILY || it.count >= it.targetCount }.forEach { HabitSummary(it) }
     }
 }

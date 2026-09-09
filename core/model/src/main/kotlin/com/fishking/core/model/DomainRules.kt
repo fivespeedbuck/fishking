@@ -68,3 +68,148 @@ object HabitRules {
             .count()
     }
 }
+
+/**
+ * One source of truth for habit schedule and homepage projection.  Every query is evaluated
+ * as-of [date]; future records must never make a historical day look completed or hidden.
+ */
+data class HabitDayState(
+    val rule: HabitVersion,
+    val actualCount: Int,
+    val periodCount: Int,
+    val isPlannedDate: Boolean,
+    val isDue: Boolean,
+    val isCompleteOnDate: Boolean,
+    val shouldAppearOnHome: Boolean,
+    val previousCompletionDate: LocalDate?,
+    val nextDueDate: LocalDate?,
+)
+
+object HabitScheduleRules {
+    fun state(rule: HabitVersion, allRecords: Collection<HabitDayRecord>, date: LocalDate): HabitDayState {
+        val records = allRecords.asSequence()
+            .filter { it.count > 0 && !it.date.isAfter(date) }
+            .sortedBy(HabitDayRecord::date)
+            .toList()
+        val actual = records.firstOrNull { it.date == date }?.count ?: 0
+        val periodCount = periodCount(rule, records, date)
+        val planned = isPlannedDate(rule, records, date)
+        val anchor = if (rule.period == HabitPeriod.AFTER_COMPLETION_N_DAYS) {
+            records.lastOrNull { it.affectsScheduleAnchor }?.date
+        } else {
+            null
+        }
+        val nextDue = when (rule.period) {
+            HabitPeriod.EVERY_N_DAYS -> fixedCadenceNextUnconsumed(rule, records)
+            HabitPeriod.AFTER_COMPLETION_N_DAYS -> (anchor?.plusDays(rule.intervalDays.toLong()) ?: rule.scheduleStartDate)
+            else -> null
+        }
+        val due = when (rule.period) {
+            HabitPeriod.EVERY_N_DAYS,
+            HabitPeriod.AFTER_COMPLETION_N_DAYS,
+            -> nextDue != null && !date.isBefore(nextDue)
+            else -> planned && periodCount < rule.targetCount
+        }
+        val completeToday = when (rule.period) {
+            HabitPeriod.DAILY -> actual >= rule.targetCount
+            else -> actual > 0
+        }
+        // A true actual completion always projects today, even when it happened off-plan.
+        // Without an actual completion, only the currently due planned work projects.
+        val appears = actual > 0 || (!completeToday && due)
+        return HabitDayState(
+            rule = rule,
+            actualCount = actual,
+            periodCount = periodCount,
+            isPlannedDate = planned,
+            isDue = due,
+            isCompleteOnDate = completeToday,
+            shouldAppearOnHome = appears,
+            previousCompletionDate = anchor,
+            nextDueDate = nextDue,
+        )
+    }
+
+    private fun periodCount(rule: HabitVersion, records: List<HabitDayRecord>, date: LocalDate): Int = when (rule.period) {
+        HabitPeriod.DAILY -> records.firstOrNull { it.date == date }?.count ?: 0
+        HabitPeriod.WEEKLY -> records.asSequence()
+            .filter { !it.date.isBefore(HabitRules.weekStart(date)) }
+            .map(HabitDayRecord::date).distinct().count()
+        HabitPeriod.MONTHLY -> records.asSequence()
+            .filter { java.time.YearMonth.from(it.date) == java.time.YearMonth.from(date) }
+            .map(HabitDayRecord::date).distinct().count()
+        HabitPeriod.EVERY_N_DAYS,
+        HabitPeriod.AFTER_COMPLETION_N_DAYS,
+        -> if (records.any { it.date == date }) 1 else 0
+    }
+
+    private fun isPlannedDate(rule: HabitVersion, records: List<HabitDayRecord>, date: LocalDate): Boolean = when (rule.period) {
+        HabitPeriod.DAILY -> true
+        HabitPeriod.WEEKLY -> if (rule.scheduleDays.isEmpty()) true else {
+            val candidates = rule.scheduleDays.sorted()
+                .map { HabitRules.weekStart(date).plusDays((it - 1).toLong()) }
+                .filter { !it.isAfter(HabitRules.weekStart(date).plusDays(6)) }
+            candidates.isNotEmpty() && plannedFlexibleDate(
+                candidates = candidates,
+                records = records.filter { !it.date.isBefore(HabitRules.weekStart(date)) },
+                date = date,
+                target = rule.targetCount,
+            )
+        }
+        HabitPeriod.MONTHLY -> if (rule.scheduleDays.isEmpty()) true else {
+            val candidates = rule.scheduleDays.sorted().mapNotNull { day ->
+                val month = java.time.YearMonth.from(date)
+                if (day in 1..month.lengthOfMonth()) month.atDay(day) else null
+            }
+            candidates.isNotEmpty() && plannedFlexibleDate(
+                candidates = candidates,
+                records = records.filter { java.time.YearMonth.from(it.date) == java.time.YearMonth.from(date) },
+                date = date,
+                target = rule.targetCount,
+            )
+        }
+        HabitPeriod.EVERY_N_DAYS -> date >= rule.scheduleStartDate &&
+            ChronoUnit.DAYS.between(rule.scheduleStartDate, date) % rule.intervalDays == 0L
+        HabitPeriod.AFTER_COMPLETION_N_DAYS -> false
+    }
+
+    /**
+     * Candidate weekdays/month-days are reminder slots, not exclusive permissions. A real
+     * early completion consumes the next candidate slot, so Wed/Sat plus Tue completion does
+     * not nag again on Wednesday. Empty candidates intentionally means flexible period goal.
+     */
+    private fun plannedFlexibleDate(
+        candidates: List<LocalDate>,
+        records: List<HabitDayRecord>,
+        date: LocalDate,
+        target: Int,
+    ): Boolean {
+        if (candidates.isEmpty()) return true
+        val candidateIndex = candidates.indexOf(date)
+        if (candidateIndex < 0) return false
+        val completedBefore = records.count { it.date.isBefore(date) }
+        return completedBefore < target && candidateIndex >= completedBefore
+    }
+
+    /** Assign every real completion to the earliest still-unconsumed fixed slot. */
+    private fun fixedCadenceNextUnconsumed(
+        rule: HabitVersion,
+        records: List<HabitDayRecord>,
+    ): LocalDate {
+        val interval = rule.intervalDays.toLong()
+        var nextSlot = rule.scheduleStartDate
+        records.filter { !it.date.isBefore(rule.scheduleStartDate) }.forEach {
+            if (!it.date.isBefore(nextSlot)) {
+                // One late completion clears all missed slots through that date while the
+                // underlying calendar cadence remains anchored to scheduleStartDate.
+                val elapsed = ChronoUnit.DAYS.between(rule.scheduleStartDate, it.date)
+                val nextIndex = elapsed / interval + 1
+                nextSlot = rule.scheduleStartDate.plusDays(nextIndex * interval)
+            } else {
+                // An early completion consumes exactly the next future slot.
+                nextSlot = nextSlot.plusDays(interval)
+            }
+        }
+        return nextSlot
+    }
+}

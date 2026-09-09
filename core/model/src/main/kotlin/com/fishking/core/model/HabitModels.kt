@@ -8,6 +8,10 @@ enum class HabitPeriod {
     DAILY,
     WEEKLY,
     MONTHLY,
+    /** A fixed calendar cadence whose slots never move after a completion. */
+    EVERY_N_DAYS,
+    /** A cadence re-anchored by the latest completion the user chose to count. */
+    AFTER_COMPLETION_N_DAYS,
 }
 
 data class Habit(
@@ -24,7 +28,12 @@ data class Habit(
 data class HabitVersion(
     val id: String,
     val habitId: String,
-    val effectiveFromWeek: LocalDate,
+    /**
+     * This is deliberately a natural date, not a week boundary.  The underlying legacy
+     * SQLite column remains named `effectiveFromWeek` so existing installations migrate
+     * without a table rebuild.
+     */
+    val effectiveFromDate: LocalDate,
     val effectiveUntilExclusive: LocalDate? = null,
     /** The user-facing identity is versioned so historical weeks never change after an edit. */
     val title: String,
@@ -33,10 +42,19 @@ data class HabitVersion(
     val targetCount: Int,
     /** ISO weekday numbers for WEEKLY, month-day numbers for MONTHLY. Empty keeps legacy flexible rules. */
     val scheduleDays: Set<Int> = emptySet(),
+    /** Positive only for the two N-day modes. */
+    val intervalDays: Int = 1,
+    /** Fixed cadence origin, or the first due date for completion-anchored cadence. */
+    val scheduleStartDate: LocalDate,
     val createdAt: Instant,
 ) {
     init {
         require(targetCount > 0) { "Habit targetCount must be positive" }
+        require(intervalDays > 0) { "Habit intervalDays must be positive" }
+        if (period == HabitPeriod.EVERY_N_DAYS || period == HabitPeriod.AFTER_COMPLETION_N_DAYS) {
+            require(targetCount == 1) { "N-day habits have a single completion target" }
+            require(scheduleDays.isEmpty()) { "N-day habits cannot also select schedule days" }
+        }
     }
 }
 
@@ -46,6 +64,8 @@ data class HabitDayRecord(
     val count: Int,
     val isBackfilled: Boolean,
     val updatedAt: Instant,
+    /** A historical backfill is real history but does not silently move a dynamic cadence. */
+    val affectsScheduleAnchor: Boolean = !isBackfilled,
 ) {
     init {
         require(count > 0) { "Persisted habit count must be positive" }
@@ -69,29 +89,46 @@ data class HabitWeekItem(
     val period: HabitPeriod,
     val targetCount: Int,
     val scheduleDays: Set<Int> = emptySet(),
+    val intervalDays: Int = 1,
+    val scheduleStartDate: LocalDate = startDate,
     val isSkipped: Boolean,
     val records: List<HabitDayRecord>,
+    /** All versions intersecting this week. Existing callers can keep using the summary fields. */
+    val versions: List<HabitVersion> = emptyList(),
 ) {
     fun countOn(date: LocalDate): Int = records.firstOrNull { it.date == date }?.count ?: 0
 
-    val weeklyEffectiveDayCount: Int
-        get() = HabitRules.weeklyEffectiveDayCount(records, weekStart)
+    val weeklyEffectiveDayCount: Int get() = effectiveCountFor(weekStart.plusDays(6))
 
-    fun effectiveCountFor(date: LocalDate): Int = when (period) {
-        HabitPeriod.DAILY -> countOn(date)
-        HabitPeriod.WEEKLY -> HabitRules.weeklyEffectiveDayCount(records, HabitRules.weekStart(date))
-        HabitPeriod.MONTHLY -> records.asSequence()
-            .filter { it.count > 0 && YearMonth.from(it.date) == YearMonth.from(date) }
-            .map(HabitDayRecord::date)
-            .distinct()
-            .count()
+    fun ruleOn(date: LocalDate): HabitVersion {
+        val matching = versions.asSequence()
+            .filter { !it.effectiveFromDate.isAfter(date) }
+            .filter { it.effectiveUntilExclusive == null || it.effectiveUntilExclusive.isAfter(date) }
+            .maxByOrNull(HabitVersion::effectiveFromDate)
+        return matching ?: HabitVersion(
+            id = versionId,
+            habitId = id,
+            effectiveFromDate = weekStart,
+            title = title,
+            color = color,
+            period = period,
+            targetCount = targetCount,
+            scheduleDays = scheduleDays,
+            intervalDays = intervalDays,
+            scheduleStartDate = scheduleStartDate,
+            createdAt = java.time.Instant.EPOCH,
+        )
     }
 
-    fun isScheduledOn(date: LocalDate): Boolean = when (period) {
-        HabitPeriod.DAILY -> true
-        HabitPeriod.WEEKLY -> scheduleDays.isEmpty() || date.dayOfWeek.value in scheduleDays
-        HabitPeriod.MONTHLY -> scheduleDays.isEmpty() || date.dayOfMonth in scheduleDays
-    }
+    fun effectiveCountFor(date: LocalDate): Int = HabitScheduleRules
+        .state(ruleOn(date), records, date)
+        .periodCount
+
+    fun isScheduledOn(date: LocalDate): Boolean = HabitScheduleRules
+        .state(ruleOn(date), records, date)
+        .isPlannedDate
+
+    fun dayState(date: LocalDate): HabitDayState = HabitScheduleRules.state(ruleOn(date), records, date)
 }
 
 data class HabitWeekSnapshot(

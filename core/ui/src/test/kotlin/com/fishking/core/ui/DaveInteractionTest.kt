@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertCountEquals
@@ -29,6 +30,7 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.unit.dp
 import com.fishking.core.model.HabitPeriod
+import com.fishking.core.model.HabitDayRecord
 import com.fishking.core.model.HabitWeekItem
 import com.fishking.core.model.HabitWeekSnapshot
 import com.fishking.core.model.LifeGoal
@@ -322,6 +324,32 @@ class DaveInteractionTest {
         compose.onNodeWithText("#自定义月", substring = true).assertDoesNotExist()
     }
 
+    @Test fun intervalHabitUsesExistingStepperAndShowsIconOnlyCadenceChoices() {
+        var interval = 3
+        content {
+            Column {
+                DaveHabitQuickOptions(
+                    period = HabitPeriod.EVERY_N_DAYS,
+                    targetCount = 1,
+                    intervalDays = interval,
+                    onPeriodSelected = {},
+                    onTargetCountChanged = {},
+                    onIntervalDaysChanged = { interval = it },
+                )
+                DaveHabitCadenceOptions(HabitPeriod.EVERY_N_DAYS, {})
+                DaveHabitCard(
+                    "洗床单", 0, 1, HabitPeriod.EVERY_N_DAYS, 0xFF8FA7E4,
+                    false, onClick = {}, intervalDays = 3,
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("每N天一次").assertIsDisplayed()
+        compose.onNodeWithContentDescription("完成后隔N天").assertIsDisplayed()
+        compose.onNodeWithContentDescription("增加间隔天数").performClick()
+        compose.runOnIdle { assertEquals(4, interval) }
+        compose.onNodeWithText("#每3天").assertIsDisplayed()
+    }
+
     @Test fun habitWeekProgressShowsPeriodSuffixWithoutCustomTags() {
         val week = LocalDate.of(2026, 9, 7)
         content {
@@ -338,6 +366,56 @@ class DaveInteractionTest {
         compose.onNodeWithText("0/1·月").assertIsDisplayed()
         compose.onNodeWithText("#健康", substring = true).assertDoesNotExist()
         compose.onNodeWithText("#家务", substring = true).assertDoesNotExist()
+    }
+
+    @Test fun habitWeekMarksTodayAndKeepsOffPlanDaysVisible() {
+        val week = LocalDate.of(2026, 9, 7)
+        content {
+            DaveHabitWeekPanel(
+                snapshot = HabitWeekSnapshot(
+                    week,
+                    listOf(habitItem("刷酸", week, HabitPeriod.WEEKLY, 1).copy(scheduleDays = setOf(3))),
+                ),
+                today = week,
+                onToggle = { _, _ -> },
+                onEdit = {},
+                onToggleSkip = { _, _ -> },
+                onEndFromWeek = { _, _ -> },
+            )
+        }
+        compose.onNodeWithText("今").assertIsDisplayed()
+        compose.onAllNodesWithContentDescription("空集", substring = true).assertCountEquals(6)
+    }
+
+    @Test fun completedWeeklyAndMonthlyTargetsReplaceRemainingEmptyCirclesWithEmptySetMarks() {
+        val week = LocalDate.of(2026, 9, 7)
+        val completed = HabitDayRecord("done", week, 1, false, Instant.EPOCH)
+        content {
+            DaveHabitWeekPanel(
+                snapshot = HabitWeekSnapshot(
+                    week,
+                    listOf(
+                        habitItem("周目标", week, HabitPeriod.WEEKLY, 1)
+                            .copy(records = listOf(completed.copy(habitId = "周目标"))),
+                        habitItem("月目标", week, HabitPeriod.MONTHLY, 1)
+                            .copy(records = listOf(completed.copy(habitId = "月目标"))),
+                    ),
+                ),
+                today = week.plusDays(2),
+                onToggle = { _, _ -> },
+                onEdit = {},
+                onToggleSkip = { _, _ -> },
+                onEndFromWeek = { _, _ -> },
+            )
+        }
+        compose.onAllNodesWithContentDescription("空集", substring = true).assertCountEquals(12)
+    }
+
+    @Test fun removedGlobalSkinsMigrateToUnifiedHabitSkin() {
+        assertEquals(HabitWeekSkin.UNIFIED_CARD, HabitWeekSkin.fromPreference(null))
+        assertEquals(HabitWeekSkin.UNIFIED_CARD, HabitWeekSkin.fromPreference("paper"))
+        assertEquals(HabitWeekSkin.UNIFIED_CARD, HabitWeekSkin.fromPreference("dave"))
+        assertEquals(HabitWeekSkin.SPACED_CARDS, HabitWeekSkin.fromPreference("habit_spaced"))
     }
 
     @Test fun habitEditorReplacesSelectedRowBetweenNeighboursAndCancelRestoresIt() {

@@ -3,6 +3,7 @@ package com.fishking.core.database
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
+import androidx.room.ColumnInfo
 import androidx.room.PrimaryKey
 import java.time.Instant
 import java.time.LocalDate
@@ -41,7 +42,8 @@ data class HabitEntity(
 data class HabitVersionEntity(
     @PrimaryKey val id: String,
     val habitId: String,
-    val effectiveFromWeek: LocalDate,
+    @ColumnInfo(name = "effectiveFromWeek")
+    val effectiveFromDate: LocalDate,
     val effectiveUntilExclusive: LocalDate?,
     val title: String,
     val color: Long,
@@ -49,6 +51,8 @@ data class HabitVersionEntity(
     val targetCount: Int,
     /** Comma-separated ISO weekdays or month-day values; empty means the legacy flexible rule. */
     val scheduleDays: String = "",
+    val intervalDays: Int = 1,
+    val scheduleStartDate: LocalDate,
     val createdAt: Instant,
 )
 
@@ -69,6 +73,7 @@ data class HabitDayRecordEntity(
     val date: LocalDate,
     val count: Int,
     val isBackfilled: Boolean,
+    val affectsScheduleAnchor: Boolean = !isBackfilled,
     val updatedAt: Instant,
 )
 

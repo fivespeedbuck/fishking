@@ -13,13 +13,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.fishking.core.ui.DavePalette
+import com.fishking.core.ui.HabitWeekSkin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun SettingsPanel(backup: FishKingBackup, paper: Boolean, tags: String,
-    onPaper: (Boolean) -> Unit, onTags: (String) -> Unit, onDismiss: () -> Unit, onDataRestored: () -> Unit = {}) {
+internal fun SettingsPanel(backup: FishKingBackup, habitSkin: HabitWeekSkin, tags: String,
+    onHabitSkin: (HabitWeekSkin) -> Unit, onTags: (String) -> Unit, onDismiss: () -> Unit, onDataRestored: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var password by remember { mutableStateOf("") }
@@ -43,10 +44,22 @@ internal fun SettingsPanel(backup: FishKingBackup, paper: Boolean, tags: String,
         Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), color = DavePalette.Card) {
             Column(Modifier.fillMaxWidth().heightIn(max = 640.dp).verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Text("设置", style = MaterialTheme.typography.headlineSmall)
-                Text("皮肤", style = MaterialTheme.typography.titleMedium)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(if (paper) "纸质笔记本" else "Dave 渐变")
-                    Switch(paper, onCheckedChange = onPaper, enabled = !busy)
+                Text("习惯周视图皮肤", style = MaterialTheme.typography.titleMedium)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = habitSkin == HabitWeekSkin.UNIFIED_CARD,
+                        onClick = { onHabitSkin(HabitWeekSkin.UNIFIED_CARD) },
+                        label = { Text("整体大卡") },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                    )
+                    FilterChip(
+                        selected = habitSkin == HabitWeekSkin.SPACED_CARDS,
+                        onClick = { onHabitSkin(HabitWeekSkin.SPACED_CARDS) },
+                        label = { Text("分卡间隔") },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
                 OutlinedTextField(tagDraft, { tagDraft = it }, label = { Text("预设 TAG · 空格分隔") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
                 TextButton(onClick = { onTags(tagDraft); status = "预设 TAG 已保存" }, enabled = !busy) { Text("保存标签") }

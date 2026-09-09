@@ -1,14 +1,14 @@
 {
-  "tag_name": "v0.1.3",
-  "name": "咸鱼大王 0.1.3 (Build 15)",
-  "body": "修复主页周/月习惯当天已打卡却仍留在未完成区的问题：当天打卡后移到已完成区，撤销后回到上方；周期累计进度保留，每日多次习惯仍需达到当天目标。日视图与周视图同步。此 APK 沿用原 Android Debug 签名，可覆盖升级，不是应用商店生产签名包。",
-  "html_url": "https://github.com/fivespeedbuck/fishking/releases/tag/v0.1.3",
+  "tag_name": "v0.1.11",
+  "name": "咸鱼大王 0.1.11 (Build 23)",
+  "body": "新增可切换的习惯周视图皮肤：默认整体大卡无间隔样式，保留分卡间隔样式；今日列连续浅薄荷色显示；非计划日期使用标准空集标记；移除 Claude 纸质背景皮肤。此 APK 沿用 Android Debug 签名，不是应用商店生产签名包。",
+  "html_url": "https://github.com/fivespeedbuck/fishking/releases/tag/v0.1.11",
   "assets": [
     {
-      "name": "fishking-0.1.3-build15-habit-completion-20260908-debug.apk",
-      "browser_download_url": "https://github.com/fivespeedbuck/fishking/releases/download/v0.1.3/fishking-0.1.3-build15-habit-completion-20260908-debug.apk",
-      "size": 21477299,
-      "digest": "sha256:ADF8088617F97ADE8135900208D648FDC0F53AAA57C6EE77A7B1254E1E0F5759"
+      "name": "fishking-0.1.11-build23-standard-empty-set-debug.apk",
+      "browser_download_url": "https://github.com/fivespeedbuck/fishking/releases/download/v0.1.11/fishking-0.1.11-build23-standard-empty-set-debug.apk",
+      "size": 21970357,
+      "digest": "sha256:7E24E9EE6E39E866C8B3977B54BB4BEEA07E4C99C3DAEC2338B953470C2D27FA"
     }
   ]
 }

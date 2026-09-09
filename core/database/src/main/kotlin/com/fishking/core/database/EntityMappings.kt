@@ -97,13 +97,15 @@ fun HabitEntity.toModel() = Habit(
 fun HabitVersionEntity.toModel() = HabitVersion(
     id = id,
     habitId = habitId,
-    effectiveFromWeek = effectiveFromWeek,
+    effectiveFromDate = effectiveFromDate,
     effectiveUntilExclusive = effectiveUntilExclusive,
     title = title,
     color = color,
     period = HabitPeriod.valueOf(period),
     targetCount = targetCount,
     scheduleDays = scheduleDays.split(',').mapNotNull(String::toIntOrNull).toSet(),
+    intervalDays = intervalDays,
+    scheduleStartDate = scheduleStartDate,
     createdAt = createdAt,
 )
 
@@ -112,6 +114,7 @@ fun HabitDayRecordEntity.toModel() = HabitDayRecord(
     date = date,
     count = count,
     isBackfilled = isBackfilled,
+    affectsScheduleAnchor = affectsScheduleAnchor,
     updatedAt = updatedAt,
 )
 

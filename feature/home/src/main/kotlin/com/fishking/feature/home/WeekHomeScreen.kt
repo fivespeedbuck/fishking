@@ -443,6 +443,7 @@ private fun WeekEntryCard(
             targetCount = entry.value.targetCount,
             period = entry.value.period,
             color = entry.value.color,
+            intervalDays = entry.value.intervalDays,
             checkedOnDate = entry.checkedOnDate,
             onClick = { onToggleHabit(entry.value.id) },
             dragId = weekHabitDragId(entry.value.id, displayDate),

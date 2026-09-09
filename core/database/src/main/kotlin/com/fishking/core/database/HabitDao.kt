@@ -8,21 +8,6 @@ import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
 
-data class HabitForWeekRow(
-    val id: String,
-    val title: String,
-    val color: Long,
-    val startDate: LocalDate,
-    val endedFromWeek: LocalDate?,
-    val position: Long,
-    val versionId: String,
-    val period: String,
-    val targetCount: Int,
-    val scheduleDays: String,
-    val effectiveFromWeek: LocalDate,
-    val isSkipped: Boolean,
-)
-
 @Dao
 interface HabitDao {
     @Query("SELECT * FROM habits WHERE deletedAt IS NULL ORDER BY position ASC")
@@ -36,30 +21,6 @@ interface HabitDao {
 
     @Query("SELECT * FROM habit_week_skips ORDER BY weekStart ASC")
     fun observeAllSkips(): Flow<List<HabitWeekSkipEntity>>
-
-    @Query(
-        """
-        SELECT h.id, v.title AS title, v.color AS color, h.startDate, h.endedFromWeek, h.position,
-               v.id AS versionId, v.period, v.targetCount, v.scheduleDays, v.effectiveFromWeek,
-               EXISTS(
-                   SELECT 1 FROM habit_week_skips s
-                   WHERE s.habitId = h.id AND s.weekStart = :weekStart
-               ) AS isSkipped
-        FROM habits h
-        JOIN habit_versions v ON v.habitId = h.id
-        WHERE h.deletedAt IS NULL AND h.startDate <= :weekEnd
-          AND (h.endedFromWeek IS NULL OR h.endedFromWeek > :weekStart)
-          AND v.effectiveFromWeek = (
-              SELECT MAX(v2.effectiveFromWeek)
-              FROM habit_versions v2
-              WHERE v2.habitId = h.id
-                AND v2.effectiveFromWeek <= :weekStart
-                AND (v2.effectiveUntilExclusive IS NULL OR v2.effectiveUntilExclusive > :weekStart)
-          )
-        ORDER BY h.position ASC
-        """,
-    )
-    fun observeForWeek(weekStart: LocalDate, weekEnd: LocalDate): Flow<List<HabitForWeekRow>>
 
     @Query(
         """
@@ -83,18 +44,21 @@ interface HabitDao {
         """
         SELECT * FROM habit_versions
         WHERE habitId = :habitId
-          AND effectiveFromWeek <= :weekStart
-          AND (effectiveUntilExclusive IS NULL OR effectiveUntilExclusive > :weekStart)
+          AND effectiveFromWeek <= :date
+          AND (effectiveUntilExclusive IS NULL OR effectiveUntilExclusive > :date)
         ORDER BY effectiveFromWeek DESC LIMIT 1
         """,
     )
-    suspend fun versionFor(habitId: String, weekStart: LocalDate): HabitVersionEntity?
+    suspend fun versionFor(habitId: String, date: LocalDate): HabitVersionEntity?
 
     @Query("SELECT * FROM habit_versions WHERE habitId = :habitId ORDER BY effectiveFromWeek ASC LIMIT 1")
     suspend fun firstVersion(habitId: String): HabitVersionEntity?
 
     @Query("SELECT * FROM habit_day_records WHERE habitId = :habitId AND date = :date LIMIT 1")
     suspend fun dayRecord(habitId: String, date: LocalDate): HabitDayRecordEntity?
+
+    @Query("SELECT * FROM habit_day_records WHERE habitId = :habitId ORDER BY date ASC")
+    suspend fun recordsForHabit(habitId: String): List<HabitDayRecordEntity>
 
     @Insert
     suspend fun insertHabit(habit: HabitEntity)
