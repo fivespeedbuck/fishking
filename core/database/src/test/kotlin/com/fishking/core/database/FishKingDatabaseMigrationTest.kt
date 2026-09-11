@@ -20,7 +20,8 @@ class FishKingDatabaseMigrationTest {
 
     @Test
     fun migration1To2PreservesRowsAndBackfillsHistoricalHabitAppearance() {
-        helper.createDatabase(TEST_DATABASE, 1).apply {
+        val name = "m12"
+        helper.createDatabase(name, 1).apply {
             execSQL(
                 """
                 INSERT INTO habits (
@@ -54,7 +55,7 @@ class FishKingDatabaseMigrationTest {
         }
 
         val migrated = helper.runMigrationsAndValidate(
-            TEST_DATABASE,
+            name,
             2,
             true,
             FishKingDatabase.MIGRATION_1_2,
@@ -83,7 +84,7 @@ class FishKingDatabaseMigrationTest {
 
     @Test
     fun migration2To3PreservesJournalBlocksMediaAndAllowsSameDateEntries() {
-        val name = "fishking-multi-entry-migration"
+        val name = "m23"
         helper.createDatabase(name, 2).apply {
             execSQL("INSERT INTO journals VALUES ('old', 20000, '原位置', NULL, NULL, 10, 10)")
             execSQL("INSERT INTO journal_blocks VALUES ('body', 'old', 0, 'TEXT_LINE', '旧正文', 99, 'BODY', NULL, 10, 10)")
@@ -109,7 +110,7 @@ class FishKingDatabaseMigrationTest {
 
     @Test
     fun migration3To4PreservesTodosJournalsHabitsAndMediaWithSafeDefaults() {
-        val name = "fishking-plan-soft-delete-migration"
+        val name = "m34"
         helper.createDatabase(name, 3).apply {
             execSQL(
                 """
@@ -158,7 +159,7 @@ class FishKingDatabaseMigrationTest {
 
     @Test
     fun migration4To5AddsHabitSchedulesAndRemovesLegacyRecurringTestData() {
-        val name = "fishking-habit-schedule-migration"
+        val name = "m45"
         helper.createDatabase(name, 4).apply {
             execSQL("INSERT INTO habits VALUES ('habit', '跑步 #健康', 123456, 20000, NULL, 0, 10, 10, NULL)")
             execSQL("INSERT INTO habit_versions VALUES ('habit-version', 'habit', 19997, NULL, '跑步 #健康', 123456, 'WEEKLY', 2, 10)")
@@ -183,7 +184,7 @@ class FishKingDatabaseMigrationTest {
 
     @Test
     fun migration5To6AddsJournalTagsWithoutChangingExistingJournalData() {
-        val name = "fishking-journal-tag-migration"
+        val name = "m56"
         helper.createDatabase(name, 5).apply {
             execSQL("INSERT INTO journals VALUES ('journal', 20000, '宁波市', NULL, NULL, 10, 11, '13:55', NULL)")
             execSQL("INSERT INTO tags VALUES ('tag', '生活', '生活', 12)")
@@ -215,7 +216,7 @@ class FishKingDatabaseMigrationTest {
 
     @Test
     fun migration6To7PreservesHabitRulesAndMakesLegacyBackfillsNonAnchors() {
-        val name = "fishking-habit-n-day-migration"
+        val name = "m67"
         helper.createDatabase(name, 6).apply {
             execSQL("INSERT INTO habits VALUES ('daily', '刷牙', 1, 20000, NULL, 0, 10, 10, NULL)")
             execSQL("INSERT INTO habits VALUES ('weekly', '锻炼', 2, 20000, NULL, 1, 10, 10, NULL)")
@@ -246,7 +247,87 @@ class FishKingDatabaseMigrationTest {
         migrated.close()
     }
 
-    private companion object {
-        const val TEST_DATABASE = "fishking-migration-test"
+    @Test
+    fun migration7To8PreservesGoalsAndEventsAndAddsNullableAccent() {
+        val name = "m78"
+        helper.createDatabase(name, 7).apply {
+            execSQL("INSERT INTO life_goals VALUES ('goal', '看日出', '旧备注', 'ONGOING', 1024, NULL, 10, 11)")
+            execSQL("INSERT INTO life_goal_events VALUES ('event', 'goal', 20000, 'CHECK', 'MANUAL', NULL, 1024, 10)")
+            close()
+        }
+        val migrated = helper.runMigrationsAndValidate(name, 8, true, FishKingDatabase.MIGRATION_7_8)
+        migrated.query("SELECT title, note, type, accentColor FROM life_goals WHERE id='goal'").use {
+            assertTrue(it.moveToFirst())
+            assertEquals("看日出", it.getString(0)); assertEquals("旧备注", it.getString(1)); assertEquals("ONGOING", it.getString(2))
+            assertTrue(it.isNull(3))
+        }
+        migrated.query("SELECT COUNT(*) FROM life_goal_events WHERE goalId='goal'").use { it.moveToFirst(); assertEquals(1, it.getInt(0)) }
+        migrated.execSQL("UPDATE life_goals SET accentColor=4294113193 WHERE id='goal'")
+        migrated.query("SELECT accentColor FROM life_goals WHERE id='goal'").use { it.moveToFirst(); assertEquals(4294113193L, it.getLong(0)) }
+        migrated.close()
     }
+
+    @Test
+    fun migration8To9PreservesJournalTextStylesMediaAndAddsParagraphDefaults() {
+        val name = "m89"
+        helper.createDatabase(name, 8).apply {
+            execSQL("INSERT INTO journals VALUES ('journal', 20000, '旧位置', NULL, NULL, 10, 11, '09:30', NULL)")
+            execSQL("INSERT INTO journal_blocks VALUES ('body', 'journal', 1024, 'TEXT_LINE', '旧正文', 123, 'LARGE', '[]', 10, 11)")
+            execSQL("INSERT INTO journal_blocks VALUES ('image', 'journal', 2048, 'IMAGE', NULL, NULL, 'BODY', NULL, 10, 11)")
+            execSQL("INSERT INTO media_assets VALUES ('asset', '/private/keep.jpg', NULL, 'image/jpeg', 100, NULL, NULL, NULL, 10)")
+            execSQL("INSERT INTO journal_block_media_cross_ref VALUES ('image', 'asset', 0)")
+            close()
+        }
+        val migrated = helper.runMigrationsAndValidate(name, 9, true, FishKingDatabase.MIGRATION_8_9)
+        migrated.query("SELECT text, textColor, textSize, textStyleSpans, textAlignment, listStyle, isChecked FROM journal_blocks WHERE id='body'").use {
+            assertTrue(it.moveToFirst())
+            assertEquals("旧正文", it.getString(0)); assertEquals(123L, it.getLong(1))
+            assertEquals("LARGE", it.getString(2)); assertEquals("[]", it.getString(3))
+            assertEquals("LEFT", it.getString(4)); assertEquals("NONE", it.getString(5)); assertEquals(0, it.getInt(6))
+        }
+        migrated.query("SELECT COUNT(*) FROM journal_block_media_cross_ref WHERE blockId='image' AND assetId='asset'").use {
+            it.moveToFirst(); assertEquals(1, it.getInt(0))
+        }
+        migrated.execSQL("UPDATE journal_blocks SET textAlignment='RIGHT', listStyle='CHECKLIST', isChecked=1 WHERE id='body'")
+        migrated.query("SELECT textAlignment, listStyle, isChecked FROM journal_blocks WHERE id='body'").use {
+            it.moveToFirst(); assertEquals("RIGHT", it.getString(0)); assertEquals("CHECKLIST", it.getString(1)); assertEquals(1, it.getInt(2))
+        }
+        migrated.close()
+    }
+
+    @Test
+    fun migration9To10RestoresListParagraphsAsOrdinaryText() {
+        val name = "m910"
+        helper.createDatabase(name, 9).apply {
+            execSQL(
+                "INSERT INTO journals (id, entryDate, createdAt, updatedAt) " +
+                    "VALUES ('journal', 20000, 10, 11)",
+            )
+            execSQL(
+                "INSERT INTO journal_blocks " +
+                    "(id, journalId, position, type, text, createdAt, updatedAt, textAlignment, listStyle, isChecked) " +
+                    "VALUES ('checked', 'journal', 1024, 'TEXT_LINE', '', 10, 11, 'CENTER', 'CHECKLIST', 1)",
+            )
+            execSQL(
+                "INSERT INTO journal_blocks " +
+                    "(id, journalId, position, type, text, createdAt, updatedAt, textAlignment, listStyle, isChecked) " +
+                    "VALUES ('numbered', 'journal', 2048, 'TEXT_LINE', '保留正文', 10, 11, 'RIGHT', 'NUMBERED', 0)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(name, 10, true, FishKingDatabase.MIGRATION_9_10)
+        migrated.query(
+            "SELECT id, text, textAlignment, listStyle, isChecked FROM journal_blocks ORDER BY position",
+        ).use {
+            assertTrue(it.moveToFirst())
+            assertEquals("checked", it.getString(0)); assertEquals("", it.getString(1))
+            assertEquals("CENTER", it.getString(2)); assertEquals("NONE", it.getString(3)); assertEquals(0, it.getInt(4))
+            assertTrue(it.moveToNext())
+            assertEquals("numbered", it.getString(0)); assertEquals("保留正文", it.getString(1))
+            assertEquals("RIGHT", it.getString(2)); assertEquals("NONE", it.getString(3)); assertEquals(0, it.getInt(4))
+        }
+        migrated.close()
+    }
+
 }

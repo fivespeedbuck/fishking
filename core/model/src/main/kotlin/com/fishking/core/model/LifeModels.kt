@@ -27,6 +27,7 @@ data class LifeGoal(
     val deletedAt: Instant? = null,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val accentColor: Long? = null,
 )
 
 data class LifeGoalEvent(

@@ -22,6 +22,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fishking.core.ui.DavePalette
 import com.fishking.core.ui.DaveJournalTimelineThumbnails
+import com.fishking.core.ui.DaveScreenFloatingAddAction
+import com.fishking.core.ui.DaveListInlineAddAction
+import com.fishking.core.ui.FishKingSection
 import com.fishking.core.usecase.JournalRepository
 import java.time.LocalDate
 import java.time.LocalTime
@@ -52,13 +55,17 @@ fun JournalTimelineRoute(
     selectedDate: LocalDate,
     onDateChange: (LocalDate) -> Unit,
     onEditingChanged: (Boolean) -> Unit = {},
-    content: @Composable (JournalRepository, LocalDate, String) -> Unit,
+    content: @Composable (JournalRepository, LocalDate, String, () -> Unit) -> Unit,
 ) {
     var firstMonth by remember { mutableStateOf(YearMonth.from(selectedDate)) }
     var lastMonth by remember { mutableStateOf(firstMonth) }
-    val entries by remember(repository, firstMonth, lastMonth) {
-        repository.observeTimelineRange(firstMonth.atDay(1), lastMonth.atEndOfMonth())
-    }.collectAsStateWithLifecycle(emptyList())
+    var retryToken by remember { mutableIntStateOf(0) }
+    val timeline by remember(repository, firstMonth, lastMonth, retryToken) {
+        journalTimelineLoadStates {
+            repository.observeTimelineRange(firstMonth.atDay(1), lastMonth.atEndOfMonth())
+        }
+    }.collectAsStateWithLifecycle(JournalTimelineLoadState.Loading)
+    val entries = (timeline as? JournalTimelineLoadState.Ready)?.entries.orEmpty()
     val listState = rememberLazyListState()
     var activeId by rememberSaveable { mutableStateOf<String?>(null) }
     var deleteId by remember { mutableStateOf<String?>(null) }
@@ -68,9 +75,6 @@ fun JournalTimelineRoute(
     DisposableEffect(Unit) { onDispose { editingChanged(false) } }
     var activeDay by rememberSaveable { mutableStateOf(selectedDate.toEpochDay()) }
     var activeTime by rememberSaveable { mutableStateOf<String?>(null) }
-    var creating by rememberSaveable { mutableStateOf(false) }
-    var pendingTime by rememberSaveable { mutableStateOf(LocalTime.now().withSecond(0).withNano(0).toString()) }
-    val context = androidx.compose.ui.platform.LocalContext.current
     var initialPositioned by remember(selectedDate) { mutableStateOf(false) }
     LaunchedEffect(selectedDate) {
         if (activeId != null && activeDay != selectedDate.toEpochDay()) activeId = null
@@ -108,18 +112,36 @@ fun JournalTimelineRoute(
     fun open(id: String, date: LocalDate, time: LocalTime?) {
         activeDay = date.toEpochDay(); activeTime = time?.toString(); activeId = id; onDateChange(date)
     }
+    fun startNewEntry() {
+        open(
+            UUID.randomUUID().toString(),
+            selectedDate,
+            LocalTime.now().withSecond(0).withNano(0),
+        )
+    }
     if (activeId != null) {
         val id = activeId!!
         val scoped = remember(repository, id) { repository.forEntry(id, activeTime?.let(LocalTime::parse)) }
         BackHandler { activeId = null }
-        Column(Modifier.fillMaxSize()) {
-            Text("‹  日记时间线   ·   ${journalTimeLabel(activeTime?.let(LocalTime::parse))}", color = DavePalette.HeaderGreenDark,
-                modifier = Modifier.fillMaxWidth().clickable { activeId = null }.padding(horizontal = 22.dp, vertical = 12.dp))
-            Box(Modifier.weight(1f)) { content(scoped, LocalDate.ofEpochDay(activeDay), id) }
+        Box(Modifier.fillMaxSize()) {
+            content(scoped, LocalDate.ofEpochDay(activeDay), id) { activeId = null }
         }
     } else Box(Modifier.fillMaxSize().navigationBarsPadding().clipToBounds()) {
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize().nestedScroll(monthScroll).graphicsLayer { translationY = pull }, contentPadding = PaddingValues(bottom = 110.dp)) {
-            if (entries.isEmpty()) item { Text("这个月还没有日记，点击 + 记录今天", color = DavePalette.Ink, modifier = Modifier.padding(24.dp)) }
+            when (timeline) {
+                JournalTimelineLoadState.Loading -> item {
+                    Text("正在读取日记…", color = DavePalette.Meta, modifier = Modifier.padding(24.dp))
+                }
+                JournalTimelineLoadState.Failed -> item {
+                    Column(Modifier.padding(24.dp)) {
+                        Text(JOURNAL_READ_FAILURE_MESSAGE, color = DavePalette.Urgent)
+                        androidx.compose.material3.TextButton(onClick = { retryToken++ }) { Text("重试") }
+                    }
+                }
+                is JournalTimelineLoadState.Ready -> if (entries.isEmpty()) item {
+                    Text("这个月还没有日记，点击 + 记录今天", color = DavePalette.Ink, modifier = Modifier.padding(24.dp))
+                }
+            }
             itemsIndexed(entries, key = { _, entry -> entry.id }) { index, entry ->
                 Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = 20.dp)) {
                     Column(Modifier.width(62.dp).padding(top = 14.dp)) {
@@ -131,7 +153,9 @@ fun JournalTimelineRoute(
                     }
                     Box(Modifier.width(1.dp).fillMaxHeight().background(DavePalette.Meta.copy(alpha = .5f)))
                     com.fishking.core.ui.DaveSwipeDeleteContainer(onDelete = { deleteId = entry.id },
-                        modifier = Modifier.weight(1f).padding(start = 12.dp, top = 7.dp, bottom = 7.dp)) {
+                        modifier = Modifier.weight(1f).padding(start = 12.dp, top = 7.dp, bottom = 7.dp),
+                        cardStyle = true,
+                        cardColor = DavePalette.Card) {
                     Column(Modifier.fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
                         .background(DavePalette.Card, RoundedCornerShape(12.dp)).clickable { open(entry.id, entry.date, entry.time) }
@@ -156,23 +180,26 @@ fun JournalTimelineRoute(
                     }
                 }
             }
+            if (timeline is JournalTimelineLoadState.Ready) {
+                item(key = "journal-inline-add") {
+                    DaveListInlineAddAction(
+                        contentDescription = "新建日记",
+                        enabled = true,
+                        onClick = ::startNewEntry,
+                    )
+                }
+            }
             item { Text("继续向上拉，加载更早一个月", color = DavePalette.HeaderGreenDark, fontSize = 12.sp, modifier = Modifier.padding(24.dp)) }
         }
-        Box(Modifier.align(Alignment.BottomEnd).padding(22.dp).size(62.dp).clip(CircleShape).background(DavePalette.Completed, CircleShape).clickable {
-            pendingTime = LocalTime.now().withSecond(0).withNano(0).toString(); creating = true
-        }, contentAlignment = Alignment.Center) { Text("+", color = Color.White, fontSize = 39.sp) }
+        DaveScreenFloatingAddAction(
+            section = FishKingSection.JOURNAL,
+            enabled = true,
+            onClick = ::startNewEntry,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(22.dp),
+        )
     }
     deleteId?.let { id -> androidx.compose.material3.AlertDialog(onDismissRequest = { deleteId = null },
         title = { Text("删除这条日记？") }, text = { Text("只从列表移除这一条，不影响同日其他日记或人生目标。") },
         confirmButton = { androidx.compose.material3.TextButton(onClick = { deleteScope.launch { repository.deleteEntry(id) }; deleteId = null }) { Text("删除") } },
         dismissButton = { androidx.compose.material3.TextButton(onClick = { deleteId = null }) { Text("取消") } }) }
-    if (creating) androidx.compose.material3.AlertDialog(
-        onDismissRequest = { creating = false }, title = { Text("记录 ${selectedDate.monthValue}月${selectedDate.dayOfMonth}日") },
-        text = { Text("${journalTimeLabel(LocalTime.parse(pendingTime))}  · 点此修改时间", modifier = Modifier.clickable {
-            val time = LocalTime.parse(pendingTime)
-            android.app.TimePickerDialog(context, { _, hour, minute -> pendingTime = LocalTime.of(hour, minute).toString() }, time.hour, time.minute, true).show()
-        }.padding(vertical = 12.dp)) },
-        confirmButton = { androidx.compose.material3.TextButton(onClick = { creating = false; open(UUID.randomUUID().toString(), selectedDate, LocalTime.parse(pendingTime)) }) { Text("开始写") } },
-        dismissButton = { androidx.compose.material3.TextButton(onClick = { creating = false }) { Text("取消") } },
-    )
 }

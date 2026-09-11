@@ -54,6 +54,7 @@ class LifeViewModel(
     val editingNote = MutableStateFlow("")
     val editingTags = MutableStateFlow("")
     val editingType = MutableStateFlow(LifeGoalType.ONE_TIME)
+    val editingAccentColor = MutableStateFlow<Long?>(null)
 
     private fun withTags(goals: List<LifeGoalWithEvents>): Flow<List<LifeGoalUiItem>> {
         if (goals.isEmpty()) return flowOf(emptyList())
@@ -101,6 +102,7 @@ class LifeViewModel(
         editingNote.value = item.value.goal.note.orEmpty()
         editingTags.value = item.tags.joinToString(" ") { "#${it.name}" }
         editingType.value = item.value.goal.type
+        editingAccentColor.value = item.value.goal.accentColor
     }
 
     fun updateEditingTitle(value: String) {
@@ -119,12 +121,15 @@ class LifeViewModel(
         editingType.value = value
     }
 
+    fun setEditingAccentColor(value: Long?) { editingAccentColor.value = value }
+
     fun cancelEditing() {
         editingId.value = null
         editingTitle.value = ""
         editingNote.value = ""
         editingTags.value = ""
         editingType.value = LifeGoalType.ONE_TIME
+        editingAccentColor.value = null
     }
 
     fun confirmEditing() {
@@ -139,6 +144,7 @@ class LifeViewModel(
                 title = titleInput.title,
                 note = editingNote.value,
                 type = editingType.value,
+                accentColor = editingAccentColor.value,
             )
             tagRepository.setLifeGoalTags(goalId, tags)
             cancelEditing()

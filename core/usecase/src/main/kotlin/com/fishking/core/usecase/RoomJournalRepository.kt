@@ -47,7 +47,7 @@ class RoomJournalRepository(
         com.fishking.core.model.JournalTimelineItem(
             id = it.id,
             date = it.entryDate,
-            time = it.entryTime?.let(java.time.LocalTime::parse),
+            time = parseStoredJournalTime(it.entryTime),
             title = it.title,
             excerpt = it.excerpt,
             mediaCount = it.mediaCount,
@@ -110,6 +110,9 @@ class RoomJournalRepository(
                     textColor = draft.textColor,
                     textSize = draft.textSize.name,
                     textStyleSpans = encodeTextStyleSpans(draft.textStyleSpans),
+                    textAlignment = draft.textAlignment.name,
+                    listStyle = draft.listStyle.name,
+                    isChecked = draft.isChecked,
                     createdAt = existingById[ids[index]]?.createdAt ?: now,
                     updatedAt = now,
                 )
@@ -140,6 +143,28 @@ class RoomJournalRepository(
             journalDao.updateJournal(journal.copy(updatedAt = now))
             ids
         }
+    }
+
+    override suspend fun saveBlocksRemovingComponents(
+        date: LocalDate,
+        blocks: List<JournalBlockDraft>,
+        removedTypes: Set<JournalBlockType>,
+    ): List<String> = database.withTransaction {
+        require(removedTypes.all { it in setOf(JournalBlockType.LOCATION, JournalBlockType.TAGS, JournalBlockType.LINKS) })
+        require(blocks.none { it.type in removedTypes }) { "Removed metadata cannot keep a document token" }
+        validateBlocks(blocks)
+        val journal = getOrCreateJournal(date)
+        if (JournalBlockType.LOCATION in removedTypes) {
+            journalDao.updateJournal(journal.copy(locationName = null, latitude = null, longitude = null, updatedAt = clock.instant()))
+        }
+        if (JournalBlockType.TAGS in removedTypes) tagDao.deleteJournalLinks(journal.id)
+        if (JournalBlockType.LINKS in removedTypes) {
+            journalDao.unlinkAllGoals(journal.id)
+            journalDao.unlinkAllTodos(journal.id)
+        }
+        // Nested Room transactions share the same transaction: a block/media
+        // validation or write failure also rolls canonical metadata back.
+        saveBlocks(date, blocks)
     }
 
     override suspend fun setLocation(
@@ -289,6 +314,12 @@ class RoomJournalRepository(
     private fun validateBlocks(blocks: List<JournalBlockDraft>) {
         require(blocks.count { it.type == JournalBlockType.TITLE } <= 1) { "A journal has at most one title" }
         blocks.forEach { block ->
+            require(block.type == JournalBlockType.TEXT_LINE || block.listStyle == com.fishking.core.model.JournalListStyle.NONE) {
+                "Only body text paragraphs can be list items"
+            }
+            require(!block.isChecked || block.listStyle == com.fishking.core.model.JournalListStyle.CHECKLIST) {
+                "Only checklist items can be checked"
+            }
             when (block.type) {
                 JournalBlockType.TITLE, JournalBlockType.TEXT_LINE -> require(block.mediaAssetIds.isEmpty()) {
                     "Text lines cannot contain media assets"
@@ -301,6 +332,9 @@ class RoomJournalRepository(
                 JournalBlockType.VIDEO, JournalBlockType.AUDIO -> require(block.mediaAssetIds.size == 1) {
                     "Video and audio blocks require exactly one asset"
                 }
+                JournalBlockType.LOCATION, JournalBlockType.LINKS, JournalBlockType.TAGS -> require(block.mediaAssetIds.isEmpty()) {
+                    "Metadata components reference entry fields and relations, never media assets"
+                }
             }
         }
     }
@@ -308,7 +342,7 @@ class RoomJournalRepository(
     private fun JournalEntity.toModel() = JournalEntry(
         id = id,
         entryDate = entryDate,
-        entryTime = entryTime?.let(java.time.LocalTime::parse),
+        entryTime = parseStoredJournalTime(entryTime),
         locationName = locationName,
         latitude = latitude,
         longitude = longitude,
@@ -326,6 +360,11 @@ class RoomJournalRepository(
         textSize = textSize?.let { runCatching { JournalTextSize.valueOf(it) }.getOrNull() }
             ?: JournalTextSize.BODY,
         textStyleSpans = decodeTextStyleSpans(textStyleSpans, text.orEmpty().length),
+        textAlignment = runCatching { com.fishking.core.model.JournalTextAlignment.valueOf(textAlignment) }
+            .getOrDefault(com.fishking.core.model.JournalTextAlignment.LEFT),
+        listStyle = runCatching { com.fishking.core.model.JournalListStyle.valueOf(listStyle) }
+            .getOrDefault(com.fishking.core.model.JournalListStyle.NONE),
+        isChecked = isChecked,
         createdAt = createdAt,
         updatedAt = updatedAt,
     )
@@ -352,7 +391,7 @@ class RoomJournalRepository(
                 require(span.start >= 0 && span.endExclusive <= text.length && span.start < span.endExclusive) {
                     "Journal text style span is outside its text"
                 }
-                require(span.color != null || span.textSize != null) { "An empty journal text style span is invalid" }
+                require(span.hasVisualStyle()) { "An empty journal text style span is invalid" }
                 previousEnd = span.endExclusive
             }
         }
@@ -364,24 +403,39 @@ class RoomJournalRepository(
                     span.endExclusive.toString(),
                     span.color?.toString().orEmpty(),
                     span.textSize?.name.orEmpty(),
+                    if (span.bold) "1" else "",
+                    if (span.italic) "1" else "",
+                    if (span.underline) "1" else "",
+                    if (span.strikethrough) "1" else "",
+                    span.highlightColor?.toString().orEmpty(),
                 ).joinToString(",")
             }
 
         fun decodeTextStyleSpans(value: String?, textLength: Int): List<JournalTextStyleSpan> {
             if (value.isNullOrBlank() || textLength == 0) return emptyList()
             val decoded = value.split(';').mapNotNull { encoded ->
-                val parts = encoded.split(',', limit = 4)
-                if (parts.size != 4) return@mapNotNull null
+                val parts = encoded.split(',', limit = 9)
+                if (parts.size < 4) return@mapNotNull null
                 val start = parts[0].toIntOrNull() ?: return@mapNotNull null
                 val end = parts[1].toIntOrNull() ?: return@mapNotNull null
                 val color = parts[2].takeIf(String::isNotEmpty)?.toLongOrNull()
                 val size = parts[3].takeIf(String::isNotEmpty)?.let {
                     runCatching { JournalTextSize.valueOf(it) }.getOrNull()
                 }
-                JournalTextStyleSpan(start, end, color, size)
+                JournalTextStyleSpan(
+                    start = start,
+                    endExclusive = end,
+                    color = color,
+                    textSize = size,
+                    bold = parts.getOrNull(4) == "1",
+                    italic = parts.getOrNull(5) == "1",
+                    underline = parts.getOrNull(6) == "1",
+                    strikethrough = parts.getOrNull(7) == "1",
+                    highlightColor = parts.getOrNull(8)?.takeIf(String::isNotEmpty)?.toLongOrNull(),
+                )
             }.filter { span ->
                 span.start >= 0 && span.start < span.endExclusive && span.endExclusive <= textLength &&
-                    (span.color != null || span.textSize != null)
+                    span.hasVisualStyle()
             }.sortedBy(JournalTextStyleSpan::start)
 
             var previousEnd = 0
@@ -391,5 +445,8 @@ class RoomJournalRepository(
                 keep
             }
         }
+
+        private fun JournalTextStyleSpan.hasVisualStyle(): Boolean =
+            color != null || textSize != null || bold || italic || underline || strikethrough || highlightColor != null
     }
 }

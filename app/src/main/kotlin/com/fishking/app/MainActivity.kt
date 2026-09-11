@@ -4,6 +4,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -14,6 +19,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.fishking.core.ui.DaveContextHeader
@@ -23,6 +30,7 @@ import com.fishking.core.ui.DaveHomeViewButton
 import com.fishking.core.ui.FishKingSection
 import com.fishking.core.ui.FishKingTheme
 import com.fishking.core.ui.HabitWeekSkin
+import com.fishking.core.ui.AppBackgroundSkin
 import com.fishking.core.usecase.HomeRepository
 import com.fishking.core.usecase.HabitRepository
 import com.fishking.core.usecase.LifeRepository
@@ -97,6 +105,9 @@ private fun FishKingApp(
     var habitWeekSkin by remember {
         mutableStateOf(HabitWeekSkin.fromPreference(settingsPreferences.getString("skin", null)))
     }
+    var backgroundSkin by remember {
+        mutableStateOf(AppBackgroundSkin.fromPreference(settingsPreferences.getString("background_skin", null)))
+    }
     var presetTags by remember { mutableStateOf(settingsPreferences.getString("tags", "").orEmpty()) }
     var dataEpoch by remember { mutableStateOf(0) }
 
@@ -110,12 +121,14 @@ private fun FishKingApp(
         calendarVisible = false
     }, { calendarVisible = false }, if (selectedSection == FishKingSection.JOURNAL) journalDates else completedDates,
         if (selectedSection == FishKingSection.JOURNAL) "有日记" else "有已完成待办")
-    if (settingsVisible) SettingsPanel(backup, habitWeekSkin, presetTags,
+    if (settingsVisible) SettingsPanel(backup, habitWeekSkin, backgroundSkin, presetTags,
         { habitWeekSkin = it; settingsPreferences.edit().putString("skin", it.preferenceValue).apply() },
+        { backgroundSkin = it; settingsPreferences.edit().putString("background_skin", it.preferenceValue).apply() },
         { presetTags = it.split(Regex("[\\s#,，]+")).filter(String::isNotBlank).distinct().joinToString(" "); settingsPreferences.edit().putString("tags", presetTags).apply() },
         { settingsVisible = false }, onDataRestored = {
             (context as? androidx.activity.ComponentActivity)?.viewModelStore?.clear()
             habitWeekSkin = HabitWeekSkin.fromPreference(settingsPreferences.getString("skin", null))
+            backgroundSkin = AppBackgroundSkin.fromPreference(settingsPreferences.getString("background_skin", null))
             presetTags = settingsPreferences.getString("tags", "").orEmpty()
             dataEpoch++; settingsVisible = false; journalEditing = false
         })
@@ -123,6 +136,7 @@ private fun FishKingApp(
     androidx.compose.runtime.key(dataEpoch) {
     androidx.compose.runtime.CompositionLocalProvider(
         com.fishking.core.ui.LocalHabitWeekSkin provides habitWeekSkin,
+        com.fishking.core.ui.LocalAppBackgroundSkin provides backgroundSkin,
         com.fishking.core.ui.LocalPresetTags provides presetTags.split(Regex("[\\s#,，]+" )).filter(String::isNotBlank),
     ) { DavePageFrame(
         selectedSection = selectedSection,
@@ -163,7 +177,19 @@ private fun FishKingApp(
             }
         },
     ) {
-        when (selectedSection) {
+        AnimatedContent(
+            targetState = selectedSection,
+            modifier = Modifier.fillMaxSize(),
+            transitionSpec = {
+                fadeIn(
+                    animationSpec = tween(durationMillis = 170, delayMillis = 55),
+                ) togetherWith fadeOut(
+                    animationSpec = tween(durationMillis = 110),
+                )
+            },
+            label = "main-section-fade",
+        ) { visibleSection ->
+        when (visibleSection) {
             FishKingSection.HOME -> HomeRoute(
                 repository = homeRepository,
                 habitRepository = habitRepository,
@@ -177,9 +203,10 @@ private fun FishKingApp(
                 repository = journalRepository, selectedDate = selectedDate,
                 onEditingChanged = { journalEditing = it },
                 onDateChange = { selectedEpochDay = it.toEpochDay() },
-            ) { entryRepository, entryDate, entryId -> JournalScreen(
+            ) { entryRepository, entryDate, entryId, closeEditor -> JournalScreen(
                 selectedDate = entryDate,
                 journalEntryKey = entryId,
+                onClose = closeEditor,
                 journalRepository = entryRepository,
                 dailyReviewRepository = dailyReviewRepository,
                 lifeRepository = lifeRepository,
@@ -201,6 +228,7 @@ private fun FishKingApp(
                     selectedSectionName = FishKingSection.JOURNAL.name
                 },
             )
+        }
         }
     } }
     }

@@ -45,6 +45,9 @@ data class JournalBlockEntity(
     val textStyleSpans: String?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    @androidx.room.ColumnInfo(defaultValue = "'LEFT'") val textAlignment: String = "LEFT",
+    @androidx.room.ColumnInfo(defaultValue = "'NONE'") val listStyle: String = "NONE",
+    @androidx.room.ColumnInfo(defaultValue = "0") val isChecked: Boolean = false,
 )
 
 @Entity(

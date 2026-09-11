@@ -127,6 +127,7 @@ fun LifeGoalEntity.toModel() = LifeGoal(
     deletedAt = deletedAt,
     createdAt = createdAt,
     updatedAt = updatedAt,
+    accentColor = accentColor,
 )
 
 fun LifeGoalEventEntity.toModel() = LifeGoalEvent(

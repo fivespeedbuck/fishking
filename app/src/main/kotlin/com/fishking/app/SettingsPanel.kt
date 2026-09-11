@@ -14,13 +14,15 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.fishking.core.ui.DavePalette
 import com.fishking.core.ui.HabitWeekSkin
+import com.fishking.core.ui.AppBackgroundSkin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun SettingsPanel(backup: FishKingBackup, habitSkin: HabitWeekSkin, tags: String,
-    onHabitSkin: (HabitWeekSkin) -> Unit, onTags: (String) -> Unit, onDismiss: () -> Unit, onDataRestored: () -> Unit = {}) {
+internal fun SettingsPanel(backup: FishKingBackup, habitSkin: HabitWeekSkin, backgroundSkin: AppBackgroundSkin, tags: String,
+    onHabitSkin: (HabitWeekSkin) -> Unit, onBackgroundSkin: (AppBackgroundSkin) -> Unit,
+    onTags: (String) -> Unit, onDismiss: () -> Unit, onDataRestored: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var password by remember { mutableStateOf("") }
@@ -44,6 +46,23 @@ internal fun SettingsPanel(backup: FishKingBackup, habitSkin: HabitWeekSkin, tag
         Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), color = DavePalette.Card) {
             Column(Modifier.fillMaxWidth().heightIn(max = 640.dp).verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Text("设置", style = MaterialTheme.typography.headlineSmall)
+                Text("全局背景皮肤", style = MaterialTheme.typography.titleMedium)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = backgroundSkin == AppBackgroundSkin.CLASSIC_BLUE,
+                        onClick = { onBackgroundSkin(AppBackgroundSkin.CLASSIC_BLUE) },
+                        label = { Text("经典渐变蓝") },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                    )
+                    FilterChip(
+                        selected = backgroundSkin == AppBackgroundSkin.WARM_CREAM,
+                        onClick = { onBackgroundSkin(AppBackgroundSkin.WARM_CREAM) },
+                        label = { Text("柔和渐变米白") },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 Text("习惯周视图皮肤", style = MaterialTheme.typography.titleMedium)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(

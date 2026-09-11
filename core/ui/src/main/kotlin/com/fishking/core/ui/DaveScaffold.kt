@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -34,6 +35,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -49,6 +53,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 
 enum class FishKingSection(val description: String) {
     HOME("日期主页"),
@@ -62,10 +67,23 @@ fun DaveGradientBackground(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
+    val skin = LocalAppBackgroundSkin.current
+    val targetTop = if (skin == AppBackgroundSkin.WARM_CREAM) DavePalette.CreamTop else DavePalette.MintTop
+    val targetBottom = if (skin == AppBackgroundSkin.WARM_CREAM) DavePalette.CreamBottom else DavePalette.AquaBottom
+    val top by androidx.compose.animation.animateColorAsState(
+        targetValue = targetTop,
+        animationSpec = androidx.compose.animation.core.tween(320),
+        label = "background-skin-top",
+    )
+    val bottom by androidx.compose.animation.animateColorAsState(
+        targetValue = targetBottom,
+        animationSpec = androidx.compose.animation.core.tween(320),
+        label = "background-skin-bottom",
+    )
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(DavePalette.MintTop, DavePalette.AquaBottom))),
+            .background(Brush.verticalGradient(listOf(top, bottom))),
     ) {
         content()
     }
@@ -270,7 +288,10 @@ fun DavePageFrame(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
+    val addActions = remember { DaveScreenAddActions() }
+    CompositionLocalProvider(LocalDaveScreenAddActions provides addActions) {
     DaveGradientBackground(modifier) {
+        Box(Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -278,8 +299,23 @@ fun DavePageFrame(
         ) {
             header()
             if (showNavigation) DaveNavigationRow(selectedSection, onSectionSelected)
-            DaveDragLayer { content() }
+            DaveDragLayer(Modifier.weight(1f)) { content() }
         }
+        val action = addActions.forSection(selectedSection)
+        if (showNavigation && action != null) {
+            // Keep the Life-page size, color and 22dp screen-edge placement.
+            // This sibling is outside AnimatedContent and DaveDragLayer; neither
+            // a clipped list nor a dragged/returning card can cover the button.
+            Box(Modifier.matchParentSize().imePadding().zIndex(1f)) {
+                DaveFloatingAddButton(
+                    enabled = action.enabled.value,
+                    onClick = { action.onClick.value.invoke() },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(22.dp),
+                )
+            }
+        }
+        }
+    }
     }
 }
 

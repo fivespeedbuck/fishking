@@ -69,6 +69,23 @@ class RoomLifeRepositoryTest {
     }
 
     @Test
+    fun explicitAccentSurvivesEditsResultsAndProjectionToToday() = runTest {
+        val id = repository.createGoal("看日出")
+        assertNull(repository.observeGoals().first().single().goal.accentColor)
+        val accent = 0xFFF3B7C5L
+        repository.updateGoal(id, "海边日出", "出发", LifeGoalType.ONGOING, accent)
+        repository.toggleManualResult(id, date)
+        val saved = repository.observeGoals().first().single()
+        assertEquals(accent, saved.goal.accentColor)
+        assertEquals(LifeGoalResult.CHECK, saved.currentResult)
+        val todoId = repository.addToDate(id, date)
+        assertEquals(accent, homeRepository.observeTodos(date).first().first { it.id == todoId }.accentColor)
+        repository.updateGoal(id, "海边日出", null, LifeGoalType.ONGOING, null)
+        assertNull(repository.observeGoals().first().single().goal.accentColor)
+        assertEquals(1, repository.observeGoals().first().single().events.size)
+    }
+
+    @Test
     fun manualToggleAppendsStableCheckCrossHistoryEvenAtSameInstant() = runTest {
         val id = repository.createGoal("戒烟", type = LifeGoalType.ONGOING)
 

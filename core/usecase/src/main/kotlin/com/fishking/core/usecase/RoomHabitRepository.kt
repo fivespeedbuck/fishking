@@ -56,12 +56,12 @@ class RoomHabitRepository(
             .toList().asReversed().map { week ->
                 HabitWeekSnapshot(week, active.asSequence()
                     .filter { habit -> (fromWeek != null || !habit.startDate.isAfter(week.plusDays(6))) && habit.endedFromWeek?.isAfter(week) != false }
-                    .mapNotNull { itemForWeek(it, versions, records, skips, week) }
+                    .mapNotNull { itemForWeek(it, versions, records, skips, week, currentDate) }
                     .sortedBy(HabitWeekItem::position).toList())
             }
     }
 
-    private fun itemForWeek(habit: HabitEntity, allVersions: List<HabitVersionEntity>, allRecords: List<HabitDayRecordEntity>, skips: List<HabitWeekSkipEntity>, week: LocalDate): HabitWeekItem? {
+    private fun itemForWeek(habit: HabitEntity, allVersions: List<HabitVersionEntity>, allRecords: List<HabitDayRecordEntity>, skips: List<HabitWeekSkipEntity>, week: LocalDate, referenceDate: LocalDate = week): HabitWeekItem? {
         val end = week.plusDays(6)
         val versions = allVersions.asSequence().filter { it.habitId == habit.id }.map { it.toModel() }.toList()
         val activeInWeek = versions.filter { version -> !version.effectiveFromDate.isAfter(end) && version.effectiveUntilExclusive?.isAfter(week) != false }
@@ -70,7 +70,14 @@ class RoomHabitRepository(
         val intersecting = if (activeInWeek.isEmpty() && versions.minOfOrNull(HabitVersion::effectiveFromDate)?.let { week.isBefore(it) } == true) {
             listOf(versions.minByOrNull(HabitVersion::effectiveFromDate)!!)
         } else activeInWeek
-        val summary = intersecting.firstOrNull { !it.effectiveFromDate.isAfter(week) } ?: intersecting.minByOrNull(HabitVersion::effectiveFromDate) ?: return null
+        // The current-week heading represents today, historical headings the
+        // last day of that week, future headings the first day. Day circles
+        // still use their own dated rule and never inherit this summary colour.
+        val summaryDate = maxOf(week, minOf(referenceDate, end))
+        val summary = intersecting.filter { !it.effectiveFromDate.isAfter(summaryDate) }
+            .filter { it.effectiveUntilExclusive?.isAfter(summaryDate) != false }
+            .maxByOrNull(HabitVersion::effectiveFromDate)
+            ?: intersecting.minByOrNull(HabitVersion::effectiveFromDate) ?: return null
         return HabitWeekItem(
             id = habit.id, title = summary.title, color = summary.color, startDate = habit.startDate, position = habit.position,
             weekStart = week, versionId = summary.id, period = summary.period, targetCount = summary.targetCount,
@@ -94,41 +101,71 @@ class RoomHabitRepository(
     }
 
     override suspend fun updateHabit(habitId: String, effectiveFromWeek: LocalDate, title: String, color: Long, period: HabitPeriod, targetCount: Int, scheduleDays: Set<Int>) =
-        updateHabitWithSchedule(habitId, effectiveFromWeek, title, color, period, targetCount, scheduleDays, 1, effectiveFromWeek)
+        updateHabitWithSchedule(habitId, effectiveFromWeek, title, color, period, targetCount, scheduleDays, 1, effectiveFromWeek, replaceFutureSchedule = true)
 
-    override suspend fun updateHabitWithSchedule(habitId: String, effectiveFromDate: LocalDate, title: String, color: Long, period: HabitPeriod, targetCount: Int, scheduleDays: Set<Int>, intervalDays: Int, scheduleStartDate: LocalDate) {
+    override suspend fun updateHabitWithSchedule(habitId: String, effectiveFromDate: LocalDate, title: String, color: Long, period: HabitPeriod, targetCount: Int, scheduleDays: Set<Int>, intervalDays: Int, scheduleStartDate: LocalDate, replaceFutureSchedule: Boolean) {
         validate(title, period, targetCount, scheduleDays, intervalDays)
         database.withTransaction {
-            val habit = habitDao.findHabit(habitId) ?: return@withTransaction
-            if (effectiveFromDate.isBefore(habit.startDate) || (habit.endedFromWeek != null && !effectiveFromDate.isBefore(habit.endedFromWeek))) return@withTransaction
+            var habit = habitDao.findHabit(habitId) ?: return@withTransaction
+            // Editing a habit from a later visible day back to an earlier day
+            // is valid. Older code silently returned here when the requested
+            // effective date preceded the original start, which made the
+            // picker appear to accept the value but discard it on save.
+            if (effectiveFromDate.isBefore(habit.startDate)) {
+                ensureHistoryStartsOn(habit, effectiveFromDate)
+                habit = habitDao.findHabit(habitId) ?: return@withTransaction
+            }
+            if (habit.endedFromWeek != null && !effectiveFromDate.isBefore(habit.endedFromWeek)) return@withTransaction
             val current = habitDao.versionFor(habitId, effectiveFromDate) ?: return@withTransaction
+            val titleChanged = current.title != title.trim()
             val now = clock.instant(); habitDao.updateHabit(habit.copy(title = title.trim(), color = color, updatedAt = now))
+            if (replaceFutureSchedule) habitDao.deleteVersionsAfter(habitId, effectiveFromDate)
             if (current.effectiveFromDate == effectiveFromDate) {
-                habitDao.updateVersion(versionEntity(current.id, habitId, effectiveFromDate, current.effectiveUntilExclusive, title.trim(), color, period, targetCount, scheduleDays, intervalDays, scheduleStartDate, current.createdAt))
+                habitDao.updateVersion(versionEntity(current.id, habitId, effectiveFromDate, if (replaceFutureSchedule) null else current.effectiveUntilExclusive, title.trim(), color, period, targetCount, scheduleDays, intervalDays, scheduleStartDate, current.createdAt))
             } else {
                 habitDao.updateVersion(current.copy(effectiveUntilExclusive = effectiveFromDate))
-                habitDao.insertVersion(versionEntity(newId(), habitId, effectiveFromDate, null, title.trim(), color, period, targetCount, scheduleDays, intervalDays, scheduleStartDate, now))
+                // Ordinary dated edits split only this interval. A confirmed
+                // editor save can instead replace every later hidden schedule,
+                // making the visible settings authoritative from this date on.
+                habitDao.insertVersion(versionEntity(newId(), habitId, effectiveFromDate, if (replaceFutureSchedule) null else current.effectiveUntilExclusive, title.trim(), color, period, targetCount, scheduleDays, intervalDays, scheduleStartDate, now))
+            }
+            // Colour is the habit's global visual identity. Titles and schedule
+            // semantics retain their dated versions; colour edits do not touch
+            // historical facts, targets, period, title or cadence.
+            // Always heal every dated projection. Older builds could leave one
+            // version with a stale colour even when the version being edited
+            // already matched the selected colour, so a change-only guard made
+            // that inconsistency permanent across the home and habit pages.
+            habitDao.recolorAllVersions(habitId, color)
+            if (titleChanged && !replaceFutureSchedule) habitDao.versionsAfter(habitId, effectiveFromDate).forEach { future ->
+                habitDao.updateVersion(future.copy(
+                    title = title.trim(),
+                ))
             }
         }
     }
 
     override suspend fun previewCheckIn(habitId: String, date: LocalDate): HabitDayState? = database.withTransaction {
         val habit = habitDao.findHabit(habitId) ?: return@withTransaction null
-        if (habit.deletedAt != null || date.isAfter(LocalDate.now(clock))) return@withTransaction null
+        if (habit.deletedAt != null ||
+            (habit.endedFromWeek != null && !HabitRules.weekStart(date).isBefore(habit.endedFromWeek))) return@withTransaction null
         val rule = habitDao.versionFor(habitId, date)?.toModel() ?: return@withTransaction null
         HabitScheduleRules.state(rule, habitDao.recordsForHabit(habitId).map { it.toModel() }, date)
     }
 
     override suspend fun toggleCheckIn(habitId: String, date: LocalDate): Int? = database.withTransaction {
         val habit = habitDao.findHabit(habitId) ?: return@withTransaction null
-        if (habit.deletedAt != null || date.isAfter(LocalDate.now(clock)) || (habit.endedFromWeek != null && !HabitRules.weekStart(date).isBefore(habit.endedFromWeek))) return@withTransaction null
+        // The date being edited owns the record, including an explicitly selected
+        // future day in the home week view. Never silently discard its gesture.
+        if (habit.deletedAt != null || (habit.endedFromWeek != null && !HabitRules.weekStart(date).isBefore(habit.endedFromWeek))) return@withTransaction null
         ensureHistoryStartsOn(habit, date)
         val version = habitDao.versionFor(habitId, date) ?: return@withTransaction null
         val current = habitDao.dayRecord(habitId, date)
-        val next = if (HabitPeriod.valueOf(version.period) == HabitPeriod.DAILY) HabitRules.nextDailyCount(current?.count ?: 0, version.targetCount) else if (current == null) 1 else 0
+        val period = HabitPeriod.valueOf(version.period)
+        val next = if (period == HabitPeriod.DAILY) HabitRules.nextDailyCount(current?.count ?: 0, version.targetCount) else if (current == null) 1 else 0
         if (next == 0) habitDao.deleteDayRecord(habitId, date) else habitDao.upsertDayRecord(HabitDayRecordEntity(
             habitId, date, next, current?.isBackfilled == true || date.isBefore(LocalDate.now(clock)),
-            current?.affectsScheduleAnchor ?: !date.isBefore(LocalDate.now(clock)), clock.instant(),
+            current?.affectsScheduleAnchor ?: (period == HabitPeriod.AFTER_COMPLETION_N_DAYS || !date.isBefore(LocalDate.now(clock))), clock.instant(),
         ))
         next
     }

@@ -10,10 +10,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -22,6 +25,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -38,9 +42,59 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 
 private val DaveMacaronColors = listOf(
-    0xFFF3B7C5L, 0xFFF6D18AL, 0xFFF4E6A1L, 0xFFB9D9A9L,
-    0xFFA8DDD5L, 0xFFAFCDE9L, 0xFFC9B8E8L,
+    0xFFE4A0B2L, 0xFFEBC083L, 0xFFD9C66BL, 0xFF9BC18FL,
+    0xFF7DBEB7L, 0xFF8FAED6L, 0xFFB29AD3L, 0xFFDB9A89L,
 )
+
+/** Equal-width, readable macaron colours plus the rainbow; no unused trailing strip. */
+@Composable
+fun DaveMacaronPalette(
+    selected: Long?,
+    onSelected: (Long?) -> Unit,
+    modifier: Modifier = Modifier,
+    includeDefaultInk: Boolean = false,
+) {
+    var pickerOpen by remember { mutableStateOf(false) }
+    val presets = DaveMacaronColors
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (includeDefaultInk) {
+            val active = selected == null
+            Box(
+                Modifier.weight(1f).aspectRatio(1f).clip(CircleShape)
+                    .background(DavePalette.Ink, CircleShape)
+                    .border(if (active) 3.dp else 1.dp, if (active) DavePalette.HeaderGreenDark else Color.White.copy(alpha = .9f), CircleShape)
+                    .clickable { onSelected(null) }
+                    .semantics { contentDescription = "恢复默认黑色" },
+            )
+        }
+        presets.forEach { argb ->
+            val active = selected == argb
+            Box(
+                Modifier.weight(1f).aspectRatio(1f).clip(CircleShape)
+                    .background(Color(argb), CircleShape)
+                    .border(if (active) 3.dp else 1.dp, if (active) DavePalette.HeaderGreenDark else Color.White.copy(alpha = .9f), CircleShape)
+                    .clickable { onSelected(argb) }
+                    .semantics { contentDescription = "选择马卡龙颜色" },
+            )
+        }
+        val customActive = selected != null && selected !in presets
+        Box(
+            Modifier.weight(1f).aspectRatio(1f).clip(CircleShape)
+                .background(
+                    Brush.sweepGradient(listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red)),
+                    CircleShape,
+                )
+                .border(if (customActive) 3.dp else 1.dp, if (customActive) DavePalette.HeaderGreenDark else Color.White.copy(alpha = .9f), CircleShape)
+                .clickable { pickerOpen = true }
+                .semantics { contentDescription = "打开自选颜色" },
+        )
+    }
+    if (pickerOpen) DaveColorPicker(selected, onSelected) { pickerOpen = false }
+}
 
 @Composable
 fun DaveColorPicker(selected: Long?, onSelected: (Long?) -> Unit, onDismiss: () -> Unit) {

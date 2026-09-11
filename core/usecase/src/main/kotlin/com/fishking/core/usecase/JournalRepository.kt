@@ -1,6 +1,7 @@
 package com.fishking.core.usecase
 
 import com.fishking.core.model.JournalBlockDraft
+import com.fishking.core.model.JournalBlockType
 import com.fishking.core.model.JournalDocument
 import com.fishking.core.model.JournalMediaAsset
 import kotlinx.coroutines.flow.Flow
@@ -16,6 +17,16 @@ interface JournalRepository {
 
     /** Replaces the ordered editor document and returns stable block ids in the same order. */
     suspend fun saveBlocks(date: LocalDate, blocks: List<JournalBlockDraft>): List<String>
+
+    /** Commit document and explicitly removed canonical metadata together. */
+    suspend fun saveBlocksRemovingComponents(
+        date: LocalDate,
+        blocks: List<JournalBlockDraft>,
+        removedTypes: Set<JournalBlockType>,
+    ): List<String> {
+        check(removedTypes.isEmpty()) { "This repository must implement atomic component removal" }
+        return saveBlocks(date, blocks)
+    }
 
     suspend fun setLocation(
         date: LocalDate,

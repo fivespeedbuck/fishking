@@ -19,6 +19,7 @@ interface LifeRepository {
         title: String,
         note: String?,
         type: LifeGoalType,
+        accentColor: Long? = null,
     )
 
     /** Appends CHECK after CROSS/empty, or CROSS after CHECK. Existing history is never overwritten. */

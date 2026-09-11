@@ -6,6 +6,10 @@ import com.fishking.core.database.FishKingDatabase
 import com.fishking.core.model.HabitPeriod
 import com.fishking.core.model.HabitRules
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -133,7 +137,7 @@ class RoomHabitRepositoryTest {
         assertEquals(HabitPeriod.DAILY, past.period)
         assertEquals(2, past.targetCount)
         assertEquals("刷牙", past.title)
-        assertEquals(0xFF8FA7E4, past.color)
+        assertEquals(0xFFED8FAE, past.color)
         // A Wednesday edit no longer rewrites Mon/Tue. Per-day lookup exposes the new rule.
         assertEquals(HabitPeriod.DAILY, future.ruleOn(nextWeek.plusDays(1)).period)
         assertEquals(HabitPeriod.WEEKLY, future.ruleOn(nextWeek.plusDays(2)).period)
@@ -200,7 +204,7 @@ class RoomHabitRepositoryTest {
         assertEquals(HabitPeriod.DAILY, timeline[0].items.single().period)
         assertEquals(2, timeline[0].items.single().targetCount)
         assertEquals("刷牙", timeline[0].items.single().title)
-        assertEquals(0xFF8FA7E4, timeline[0].items.single().color)
+        assertEquals(0xFFED8FAE, timeline[0].items.single().color)
         assertTrue(timeline[1].items.single().isSkipped)
         assertEquals(HabitPeriod.WEEKLY, timeline[2].items.single().period)
         assertEquals(4, timeline[2].items.single().targetCount)
@@ -236,7 +240,10 @@ class RoomHabitRepositoryTest {
         assertEquals(2, repository.observeWeek(HabitRules.weekStart(past)).first().single().targetCount)
         assertEquals(4, repository.observeWeek(currentWeek.plusWeeks(1)).first().single().targetCount)
         assertTrue(database.habitDao().dayRecord(id, past)!!.isBackfilled)
-        assertNull(repository.toggleCheckIn(id, today.plusDays(1)))
+        val future = today.plusDays(1)
+        assertEquals(1, repository.toggleCheckIn(id, future))
+        assertEquals(1, database.habitDao().dayRecord(id, future)?.count)
+        assertEquals(4, repository.observeWeek(HabitRules.weekStart(currentWeek.plusWeeks(1))).first().single().targetCount)
     }
 
     @Test
@@ -295,7 +302,7 @@ class RoomHabitRepositoryTest {
     }
 
     @Test
-    fun fixedCadenceKeepsCalendarSlotsWhileDynamicCadenceReanchorsOnlyRealTodayFacts() = runTest {
+    fun fixedCadenceKeepsCalendarSlotsWhileDynamicCadenceReanchorsFromLatestRealFact() = runTest {
         val start = LocalDate.of(2026, 9, 1)
         val fixed = repository.createHabitWithSchedule("固定", 1, start, HabitPeriod.EVERY_N_DAYS, 1, emptySet(), 3, start)
         val dynamic = repository.createHabitWithSchedule("间隔", 2, start, HabitPeriod.AFTER_COMPLETION_N_DAYS, 1, emptySet(), 3, start)
@@ -306,10 +313,176 @@ class RoomHabitRepositoryTest {
 
         assertEquals(1, repository.toggleCheckIn(dynamic, today))
         assertEquals(today.plusDays(3), repository.previewCheckIn(dynamic, today)?.nextDueDate)
-        assertEquals(1, repository.toggleCheckIn(dynamic, start.plusDays(1))) // historical backfill
+        assertEquals(1, repository.toggleCheckIn(dynamic, start.plusDays(1))) // an older backfill cannot replace a later completion
         assertEquals(today.plusDays(3), repository.previewCheckIn(dynamic, today)?.nextDueDate)
-        repository.setCheckInAffectsScheduleAnchor(dynamic, start.plusDays(1), true)
-        assertEquals(today.plusDays(3), repository.previewCheckIn(dynamic, today)?.nextDueDate) // earlier anchor cannot replace latest
+
+        val backfillOnly = repository.createHabitWithSchedule("补记间隔", 3, start, HabitPeriod.AFTER_COMPLETION_N_DAYS, 1, emptySet(), 3, start)
+        val yesterday = today.minusDays(1)
+        assertEquals(1, repository.toggleCheckIn(backfillOnly, yesterday))
+        assertEquals(yesterday.plusDays(3), repository.previewCheckIn(backfillOnly, today)?.nextDueDate)
+        assertFalse(repository.previewCheckIn(backfillOnly, today)!!.isDue)
+    }
+
+    @Test
+    fun intervalScheduleCanMoveFromFutureBackBeforeItsOriginalStart() = runTest {
+        val original = LocalDate.of(2026, 9, 11)
+        val future = LocalDate.of(2026, 9, 25)
+        val earlier = LocalDate.of(2026, 9, 10)
+        val id = repository.createHabitWithSchedule(
+            "固定节奏", 1L, original, HabitPeriod.EVERY_N_DAYS, 1, emptySet(), 3, original,
+        )
+
+        repository.updateHabitWithSchedule(
+            id, original, "固定节奏", 1L, HabitPeriod.EVERY_N_DAYS, 1, emptySet(), 3, future,
+        )
+        assertEquals(future, repository.observeWeek(HabitRules.weekStart(future)).first().single().ruleOn(future).scheduleStartDate)
+
+        repository.updateHabitWithSchedule(
+            id, earlier, "固定节奏", 1L, HabitPeriod.EVERY_N_DAYS, 1, emptySet(), 3, earlier,
+        )
+
+        assertEquals(earlier, database.habitDao().findHabit(id)!!.startDate)
+        assertEquals(earlier, repository.observeWeek(HabitRules.weekStart(earlier)).first().single().ruleOn(earlier).scheduleStartDate)
+        assertTrue(repository.previewCheckIn(id, earlier)!!.isDue)
+    }
+
+    @Test
+    fun savingVisibleCadenceReplacesAHiddenFutureCadence() = runTest {
+        val start = LocalDate.of(2026, 9, 11)
+        val hiddenFuture = LocalDate.of(2026, 9, 13)
+        val hiddenFutureStart = LocalDate.of(2026, 9, 30)
+        val id = repository.createHabitWithSchedule(
+            "测试一下", 1L, start, HabitPeriod.EVERY_N_DAYS, 1, emptySet(), 3, start,
+        )
+        repository.updateHabitWithSchedule(
+            id, hiddenFuture, "测试一下", 1L,
+            HabitPeriod.AFTER_COMPLETION_N_DAYS, 1, emptySet(), 3, hiddenFutureStart,
+        )
+        repository.updateHabitWithSchedule(
+            id, LocalDate.of(2026, 10, 5), "测试一下", 1L,
+            HabitPeriod.DAILY, 1, emptySet(), 1, LocalDate.of(2026, 10, 5),
+        )
+
+        // Saving the visible editor means "use this setting from here on".
+        repository.updateHabitWithSchedule(
+            id, start, "测试一下", 1L,
+            HabitPeriod.EVERY_N_DAYS, 1, emptySet(), 3, start,
+            replaceFutureSchedule = true,
+        )
+
+        val secondWeek = repository.observeWeek(LocalDate.of(2026, 9, 14)).first().single()
+        assertEquals(HabitPeriod.EVERY_N_DAYS, secondWeek.ruleOn(LocalDate.of(2026, 9, 14)).period)
+        assertEquals(start, secondWeek.ruleOn(LocalDate.of(2026, 9, 14)).scheduleStartDate)
+        assertTrue(secondWeek.isScheduledOn(LocalDate.of(2026, 9, 14)))
+        assertTrue(secondWeek.isScheduledOn(LocalDate.of(2026, 9, 17)))
+        assertFalse(secondWeek.isScheduledOn(LocalDate.of(2026, 9, 15)))
+        val october = repository.observeWeek(LocalDate.of(2026, 10, 5)).first().single()
+        assertEquals(HabitPeriod.EVERY_N_DAYS, october.ruleOn(LocalDate.of(2026, 10, 5)).period)
+        assertTrue(october.isScheduledOn(LocalDate.of(2026, 10, 5)))
+        assertFalse(october.isScheduledOn(LocalDate.of(2026, 10, 6)))
+        assertTrue(database.habitDao().versionsAfter(id, start).isEmpty())
+    }
+
+    @Test
+    fun colourIsGlobalAcrossHistoryWhileTitlesRemainVersioned() = runTest {
+        val oldColour = 0xFF8FA7E4L
+        val newColour = 0xFFED8FAEL
+        val start = currentWeek.minusWeeks(1)
+        val id = repository.createHabit("旧标题", oldColour, start, HabitPeriod.DAILY, 1)
+        val effective = currentWeek.plusDays(3)
+        repository.updateHabitWithSchedule(id, effective, "新标题", newColour, HabitPeriod.DAILY, 1, emptySet(), 1, start)
+        val history = repository.observeWeek(start).first().single()
+        val editedWeek = repository.observeWeek(currentWeek).first().single()
+        val future = repository.observeWeek(currentWeek.plusWeeks(1)).first().single()
+        assertEquals(newColour, history.ruleOn(start.plusDays(6)).color)
+        assertEquals("旧标题", history.ruleOn(start.plusDays(6)).title)
+        for (day in 0L..6L) {
+            val date = currentWeek.plusDays(day)
+            assertEquals(newColour, editedWeek.ruleOn(date).color)
+            assertEquals(if (date < effective) "旧标题" else "新标题", editedWeek.ruleOn(date).title)
+        }
+        assertEquals(newColour, future.color)
+        assertEquals(newColour, future.ruleOn(currentWeek.plusWeeks(1)).color)
+    }
+
+    @Test
+    fun earlierIdentityEditPropagatesAcrossFutureRulesWithoutChangingTheirSchedule() = runTest {
+        val start = currentWeek.minusWeeks(1)
+        val future = currentWeek.plusWeeks(1)
+        val id = repository.createHabit("原色", 1L, start, HabitPeriod.DAILY, 1)
+        repository.updateHabitWithSchedule(id, future, "未来色", 3L, HabitPeriod.WEEKLY, 3, setOf(1, 3, 5), 1, future)
+        repository.updateHabitWithSchedule(id, currentWeek.plusDays(2), "本周色", 2L, HabitPeriod.DAILY, 1, emptySet(), 1, start)
+        val week = repository.observeWeek(currentWeek).first().single()
+        assertEquals(2L, week.ruleOn(currentWeek.plusDays(1)).color)
+        assertEquals("原色", week.ruleOn(currentWeek.plusDays(1)).title)
+        assertEquals(2L, week.ruleOn(currentWeek.plusDays(2)).color)
+        assertEquals(future, database.habitDao().versionFor(id, currentWeek.plusDays(3))!!.effectiveUntilExclusive)
+        val futureRule = repository.observeWeek(future).first().single().ruleOn(future)
+        assertEquals(2L, futureRule.color)
+        assertEquals("本周色", futureRule.title)
+        assertEquals(HabitPeriod.WEEKLY, futureRule.period)
+        assertEquals(3, futureRule.targetCount)
+        assertEquals(setOf(1, 3, 5), futureRule.scheduleDays)
+        assertEquals(future, futureRule.scheduleStartDate)
+    }
+
+    @Test
+    fun anotherPagesExistingObserverReceivesGlobalColourWithoutChangingHistoricalFacts() = runTest {
+        val start = currentWeek.minusWeeks(1)
+        val id = repository.createHabit("旧标题", 1L, start, HabitPeriod.DAILY, 2)
+        repository.toggleCheckIn(id, today.minusDays(1))
+        val habitPage = RoomHabitRepository(database, Clock.fixed(now, ZoneOffset.UTC))
+        // Room invalidation is delivered by a real executor. Keeping this
+        // collector on runTest's virtual scheduler lets withTimeout advance
+        // straight to 5 seconds before that executor can publish the update.
+        val observer = async(Dispatchers.Default.limitedParallelism(1), start = CoroutineStart.UNDISPATCHED) {
+            withTimeout(5_000) {
+                habitPage.observeTimeline(today).first { weeks ->
+                    weeks.firstOrNull { it.weekStart == currentWeek }?.items?.singleOrNull()?.color == 2L
+                }
+            }
+        }
+        repository.updateHabitWithSchedule(id, today, "新标题", 2L, HabitPeriod.DAILY, 2, emptySet(), 1, start)
+        val week = observer.await().first { it.weekStart == currentWeek }.items.single()
+        assertEquals("新标题", week.title)
+        assertEquals(2L, week.color)
+        assertEquals(2L, week.ruleOn(today.minusDays(1)).color)
+        assertEquals("旧标题", week.ruleOn(today.minusDays(1)).title)
+        assertEquals(2L, week.ruleOn(today).color)
+        assertEquals(2L, week.ruleOn(today.plusDays(1)).color)
+        assertEquals(1, week.countOn(today.minusDays(1)))
+    }
+
+    @Test
+    fun confirmingCurrentColourRepairsAStaleHistoricalVersion() = runTest {
+        val start = currentWeek.minusWeeks(1)
+        val id = repository.createHabit("统一颜色", 1L, start, HabitPeriod.DAILY, 1)
+        repository.updateHabitWithSchedule(id, today, "统一颜色", 2L, HabitPeriod.DAILY, 1, emptySet(), 1, start)
+
+        val historical = database.habitDao().firstVersion(id)!!
+        database.habitDao().updateVersion(historical.copy(color = 1L))
+        assertEquals(1L, repository.observeWeek(start).first().single().ruleOn(start).color)
+        assertEquals(2L, repository.observeWeek(currentWeek).first().single().ruleOn(today).color)
+
+        // The edited version already has colour 2. Older change-only logic
+        // skipped the global update here and left the historical card stale.
+        repository.updateHabitWithSchedule(id, today, "统一颜色", 2L, HabitPeriod.DAILY, 1, emptySet(), 1, start)
+
+        assertEquals(2L, repository.observeWeek(start).first().single().ruleOn(start).color)
+        assertEquals(2L, repository.observeWeek(currentWeek).first().single().ruleOn(today).color)
+    }
+
+    @Test
+    fun scheduleOnlyEditDoesNotOverwriteAnExplicitFutureIdentity() = runTest {
+        val start = currentWeek.minusWeeks(1)
+        val future = currentWeek.plusWeeks(1)
+        val id = repository.createHabit("原名", 1L, start, HabitPeriod.DAILY, 1)
+        repository.updateHabitWithSchedule(id, future, "未来名", 3L, HabitPeriod.WEEKLY, 2, emptySet(), 1, future)
+        repository.updateHabitWithSchedule(id, today, "原名", 3L, HabitPeriod.DAILY, 3, emptySet(), 1, start)
+        val rule = repository.observeWeek(future).first().single().ruleOn(future)
+        assertEquals("未来名", rule.title)
+        assertEquals(3L, rule.color)
+        assertEquals(2, rule.targetCount)
     }
 
     private suspend fun createHabit(

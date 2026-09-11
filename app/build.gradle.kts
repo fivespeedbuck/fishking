@@ -12,8 +12,19 @@ android {
         applicationId = "com.fishking.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 23
-        versionName = "0.1.11"
+        versionCode = 24
+        versionName = "0.1.12"
+        manifestPlaceholders["appLabel"] = "咸鱼大王"
+    }
+
+    buildTypes {
+        create("motionTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".motiontest"
+            versionNameSuffix = "-motion-test"
+            matchingFallbacks += listOf("debug")
+            manifestPlaceholders["appLabel"] = "咸鱼大王·动效测试"
+        }
     }
 
     buildFeatures {

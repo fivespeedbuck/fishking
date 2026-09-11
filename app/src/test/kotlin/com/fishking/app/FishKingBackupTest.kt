@@ -56,7 +56,13 @@ class FishKingBackupTest {
                  NULL, 'OPEN', NULL, 0, 0, NULL, 10, 10, 'MONTH', 20020)""",
         )
         db.execSQL("INSERT INTO journals (id, entryDate, locationName, latitude, longitude, createdAt, updatedAt, entryTime, deletedAt) VALUES ('journal-backup', 20000, '深圳', NULL, NULL, 10, 10, '09:10', NULL)")
-        db.execSQL("INSERT INTO journal_blocks VALUES ('block-backup', 'journal-backup', 0, 'IMAGE_ROW', NULL, NULL, NULL, NULL, 10, 10)")
+        db.execSQL(
+            """INSERT INTO journal_blocks
+                (id, journalId, position, type, text, textColor, textSize, textStyleSpans,
+                 createdAt, updatedAt, textAlignment, listStyle, isChecked)
+                VALUES ('block-backup', 'journal-backup', 0, 'IMAGE_ROW', NULL, NULL, NULL, NULL,
+                 10, 10, 'LEFT', 'NONE', 0)""",
+        )
         db.execSQL("INSERT INTO media_assets VALUES ('asset-backup', ?, NULL, 'image/jpeg', ?, 'checksum', NULL, NULL, 10)", arrayOf(sourceMedia.absolutePath, sourceMedia.length()))
         db.execSQL("INSERT INTO journal_block_media_cross_ref VALUES ('block-backup', 'asset-backup', 0)")
         context.getSharedPreferences("fishking_settings", Context.MODE_PRIVATE).edit()

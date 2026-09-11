@@ -19,6 +19,7 @@ data class LifeGoalEntity(
     val deletedAt: Instant?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val accentColor: Long? = null,
 )
 
 @Entity(

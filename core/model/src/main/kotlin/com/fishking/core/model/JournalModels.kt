@@ -33,6 +33,10 @@ enum class JournalBlockType {
     GIF,
     VIDEO,
     AUDIO,
+    /** Ordered references to the entry's canonical metadata, not copies of it. */
+    LOCATION,
+    LINKS,
+    TAGS,
 }
 
 /** Four deliberately small typography steps keep the journal expressive without becoming a document editor. */
@@ -41,6 +45,24 @@ enum class JournalTextSize {
     BODY,
     LARGE,
     TITLE,
+}
+
+/** Paragraph layout, independent of text characters and inline styled ranges. */
+enum class JournalTextAlignment { LEFT, CENTER, RIGHT }
+
+enum class JournalListStyle { NONE, BULLET, NUMBERED, LETTERED, CHECKLIST }
+
+/** Numbering is a projection of contiguous list items, never a literal text prefix. */
+fun journalListMarker(style: JournalListStyle, ordinal: Int): String = when (style) {
+    JournalListStyle.BULLET -> "•"
+    JournalListStyle.NUMBERED -> "${ordinal.coerceAtLeast(1)}."
+    JournalListStyle.LETTERED -> {
+        var value = ordinal.coerceAtLeast(1)
+        var label = ""
+        while (value > 0) { value--; label = ('a' + value % 26) + label; value /= 26 }
+        "$label."
+    }
+    else -> ""
 }
 
 /**
@@ -54,6 +76,11 @@ data class JournalTextStyleSpan(
     val endExclusive: Int,
     val color: Long? = null,
     val textSize: JournalTextSize? = null,
+    val bold: Boolean = false,
+    val italic: Boolean = false,
+    val underline: Boolean = false,
+    val strikethrough: Boolean = false,
+    val highlightColor: Long? = null,
 )
 
 data class JournalBlock(
@@ -73,6 +100,9 @@ data class JournalBlock(
     val mediaGroupPosition: Int? = null,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val textAlignment: JournalTextAlignment = JournalTextAlignment.LEFT,
+    val listStyle: JournalListStyle = JournalListStyle.NONE,
+    val isChecked: Boolean = false,
 )
 
 data class JournalMediaAsset(
@@ -108,4 +138,7 @@ data class JournalBlockDraft(
     val textSize: JournalTextSize = JournalTextSize.BODY,
     val textStyleSpans: List<JournalTextStyleSpan> = emptyList(),
     val mediaAssetIds: List<String> = emptyList(),
+    val textAlignment: JournalTextAlignment = JournalTextAlignment.LEFT,
+    val listStyle: JournalListStyle = JournalListStyle.NONE,
+    val isChecked: Boolean = false,
 )

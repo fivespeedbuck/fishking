@@ -1,7 +1,6 @@
 package com.fishking.feature.home
 
 import android.Manifest
-import android.app.TimePickerDialog
 import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
@@ -24,7 +23,6 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
@@ -42,8 +40,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -63,20 +64,28 @@ import com.fishking.core.model.TodoOccurrence
 import com.fishking.core.model.TodoChangeScope
 import com.fishking.core.model.RecurrenceFrequency
 import com.fishking.core.model.HabitWeekItem
+import com.fishking.core.model.HabitPeriod
 import com.fishking.core.model.LifeGoalWithEvents
 import com.fishking.core.ui.DaveInlineDraftCard
 import com.fishking.core.ui.DavePalette
-import com.fishking.core.ui.DaveSwipeTaskCard
+import com.fishking.core.ui.DaveHomeSwipeTaskCard
 import com.fishking.core.ui.DaveTodoQuickOptions
 import com.fishking.core.ui.DaveTodoEditScope
 import com.fishking.core.ui.DaveHabitCard
+import com.fishking.core.ui.DaveSwipeHabitCard
+import com.fishking.core.ui.DaveHabitEditor
+import com.fishking.core.ui.DaveHabitCompletionFlight
+import com.fishking.core.ui.DaveScreenFloatingAddAction
+import com.fishking.core.ui.DaveListInlineAddAction
+import com.fishking.core.ui.FishKingSection
 import com.fishking.core.usecase.HomeRepository
 import com.fishking.core.usecase.HabitRepository
 import com.fishking.core.usecase.LifeRepository
 import java.time.LocalDate
 import java.time.LocalTime
 import kotlin.math.abs
-import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.first
 
 @Composable
 fun HomeRoute(
@@ -106,12 +115,22 @@ fun HomeRoute(
     val draftDeadline by viewModel.draftDeadline.collectAsStateWithLifecycle()
     val editingDeadline by viewModel.editingDeadline.collectAsStateWithLifecycle()
     val editingTitle by viewModel.editingTitle.collectAsStateWithLifecycle()
+    val editingAccentValue by viewModel.editingAccentColor.collectAsStateWithLifecycle()
     val editingRecurrenceName by viewModel.editingRecurrence.collectAsStateWithLifecycle()
     val editingReminderTimesValue by viewModel.editingReminderTimes.collectAsStateWithLifecycle()
     val editingScopeName by viewModel.editingScope.collectAsStateWithLifecycle()
     val draftDateEpochDay by viewModel.draftDateEpochDay.collectAsStateWithLifecycle()
     val goals by viewModel.goals.collectAsStateWithLifecycle()
     val editingGoalIds by viewModel.editingGoalIds.collectAsStateWithLifecycle()
+    val habitEditingId by viewModel.habitEditingId.collectAsStateWithLifecycle()
+    val habitEditingDate by viewModel.habitEditingDate.collectAsStateWithLifecycle()
+    val habitEditingTitle by viewModel.habitEditingTitle.collectAsStateWithLifecycle()
+    val habitEditingPeriod by viewModel.habitEditingPeriod.collectAsStateWithLifecycle()
+    val habitEditingTarget by viewModel.habitEditingTarget.collectAsStateWithLifecycle()
+    val habitEditingIntervalDays by viewModel.habitEditingIntervalDays.collectAsStateWithLifecycle()
+    val habitEditingScheduleStartDate by viewModel.habitEditingScheduleStartDate.collectAsStateWithLifecycle()
+    val habitEditingScheduleDays by viewModel.habitEditingScheduleDays.collectAsStateWithLifecycle()
+    val habitEditingColor by viewModel.habitEditingColor.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val permissionPrompted = remember {
         mutableStateOf(
@@ -122,6 +141,8 @@ fun HomeRoute(
     val draftReminderTimes = ReminderDrafts.decode(draftReminderTimesValue).map { it.localTime }
     val editingReminderTimes = ReminderDrafts.decode(editingReminderTimesValue).map { it.localTime }
     val draftAccent = draftAccentValue.takeUnless { it == Long.MIN_VALUE }
+    val editingAccent = editingAccentValue.takeUnless { it == Long.MIN_VALUE }
+    fun TodoOccurrence.withEditorPreview() = if (id == editingId) copy(accentColor = editingAccent) else this
     val draftGoalIds = draftGoalIdsValue.split(',').filter(String::isNotBlank).toSet()
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) Toast.makeText(context, "提醒已保存；通知权限未开启，系统可能不显示提醒", Toast.LENGTH_LONG).show()
@@ -131,22 +152,24 @@ fun HomeRoute(
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
+    var reminderPicker by remember { mutableStateOf<ReminderPickerRequest?>(null) }
     fun chooseReminder(previous: LocalTime?, editing: Boolean) {
+        val owner = editingId
         val date = if (editing) (weekTodos.values.flatten() + todos).firstOrNull { it.id == editingId }?.displayDate ?: selectedDate
             else LocalDate.ofEpochDay(draftDateEpochDay)
         val specs = ReminderDrafts.decode(if (editing) editingReminderTimesValue else draftReminderTimesValue)
         val initial = date.plusDays((specs.firstOrNull { it.localTime == previous }?.dayOffset ?: 0).toLong())
-        android.app.DatePickerDialog(context, { _, year, month, day ->
-            val reminderDate = LocalDate.of(year, month + 1, day)
-            val time = previous ?: LocalTime.now()
-            TimePickerDialog(context, { _, hour, minute ->
-                val offset = java.time.temporal.ChronoUnit.DAYS.between(date, reminderDate).toInt()
-                if (editing) viewModel.replaceEditingReminder(previous, LocalTime.of(hour, minute), offset)
-                else viewModel.replaceDraftReminder(previous, LocalTime.of(hour, minute), offset)
-                ensureNotificationPermission()
-            }, time.hour, time.minute, true).apply { setTitle("通知提醒时间") }.show()
-        }, initial.year, initial.monthValue - 1, initial.dayOfMonth).apply { setTitle("通知提醒日期") }.show()
+        val scope = com.fishking.core.model.TodoPlanScope.valueOf(if (editing) editingPlanScope else draftPlanScope)
+        val deadline = com.fishking.core.model.ReminderSelectionRules.effectiveDeadline(scope,
+            (if (editing) editingDeadline else draftDeadline).takeIf { it.isNotBlank() }?.let(LocalDate::parse))
+        reminderPicker = ReminderPickerRequest(date, deadline, initial, previous) { time, offset ->
+            if (editing && viewModel.editingId.value != owner) return@ReminderPickerRequest
+            if (editing) viewModel.replaceEditingReminder(previous, time, offset)
+            else viewModel.replaceDraftReminder(previous, time, offset)
+            ensureNotificationPermission()
+        }
     }
+    reminderPicker?.let { request -> ReminderPicker(request) { reminderPicker = null } }
     val openReminderPicker: (LocalTime?) -> Unit = { chooseReminder(it, false) }
     val openEditingReminderPicker: (LocalTime?) -> Unit = { chooseReminder(it, true) }
     val onDraftReminderToggled: (LocalTime) -> Unit = { viewModel.toggleDraftReminder(it) }
@@ -157,11 +180,13 @@ fun HomeRoute(
     LaunchedEffect(weekView) {
         viewModel.cancelDraft()
         viewModel.cancelEditing()
+        viewModel.cancelHabitEditing()
     }
     DisposableEffect(viewModel) {
         onDispose {
             viewModel.cancelDraft()
             viewModel.cancelEditing()
+            viewModel.cancelHabitEditing()
         }
     }
 
@@ -177,29 +202,49 @@ fun HomeRoute(
             val targetDate = targetTodo?.displayDate ?: targetHabitDrag?.second ?: selectedDate
             val sourceKey = if (sourceTodo != null) "todo-$id" else sourceHabit?.let { "habit-${it.id}" }
             val targetKey = if (targetTodo != null) "todo-$target" else targetHabit?.let { "habit-${it.id}" }
-            if (sourceDate == targetDate && sourceKey != null && targetKey != null) {
+            if (!weekView && sourceDate == targetDate && sourceKey != null && targetKey != null) {
                 viewModel.reorderHomeItem(targetDate, sourceKey, targetKey, after)
             }
         },
         com.fishking.core.ui.LocalTodoPlanning provides com.fishking.core.ui.TodoPlanningEditor(
             com.fishking.core.model.TodoPlanScope.valueOf(if (editingId.isBlank()) draftPlanScope else editingPlanScope), viewModel::setPlanScope,
-            (if (editingId.isBlank()) draftDeadline else editingDeadline).takeIf { it.isNotBlank() }?.let(LocalDate::parse), viewModel::setDeadline),
+            (if (editingId.isBlank()) draftDeadline else editingDeadline).takeIf { it.isNotBlank() }?.let(LocalDate::parse), viewModel::setDeadline,
+            date = if (editingId.isBlank()) LocalDate.ofEpochDay(draftDateEpochDay)
+                else (weekTodos.values.flatten() + todos).firstOrNull { it.id == editingId }?.displayDate ?: selectedDate,
+            onDate = { date ->
+                if (editingId.isBlank()) viewModel.setDraftDate(date) else viewModel.moveTodo(editingId, date)
+            }),
         com.fishking.core.ui.LocalTodoTimeEditor provides { todo ->
         val first = todo.displayReminders.sortedWith(compareBy({ it.dayOffset }, { it.localTime })).firstOrNull()
-        val initial = first?.localTime ?: LocalTime.now()
-        TimePickerDialog(context, { _, hour, minute ->
-            viewModel.setPrimaryReminderTime(todo.id, LocalTime.of(hour, minute))
-            if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }, initial.hour, initial.minute, true).apply { setTitle("本次待办提醒时间") }.show()
+        reminderPicker = ReminderPickerRequest(todo.displayDate,
+            com.fishking.core.model.ReminderSelectionRules.effectiveDeadline(todo.planScope, todo.planDeadline),
+            todo.displayDate.plusDays((first?.dayOffset ?: 0).toLong()), first?.localTime) { time, offset ->
+            viewModel.setPrimaryReminderTime(todo.id, time, offset)
+            ensureNotificationPermission()
+        }
     }) {
     if (weekView) WeekHomeScreen(
         navigationToken = navigationToken,
         selectedDate = selectedDate,
         today = LocalDate.now(),
-        todosByDate = weekTodos,
+        todosByDate = weekTodos.mapValues { (_, entries) -> entries.map { it.withEditorPreview() } },
         habitsByWeek = weekHabits,
+        editingHabitId = habitEditingId,
+        editingHabitDate = habitEditingDate,
+        onEditHabit = { habit, date -> viewModel.startEditingHabit(habit, date) },
+        onDeleteHabit = viewModel::deleteHabit,
+        habitEditor = {
+            DaveHabitEditor(
+                title = habitEditingTitle, period = habitEditingPeriod, target = habitEditingTarget,
+                intervalDays = habitEditingIntervalDays, scheduleStartDate = habitEditingScheduleStartDate,
+                scheduleDays = habitEditingScheduleDays, color = habitEditingColor,
+                onTitleChange = viewModel::updateHabitEditingTitle, onPeriodChange = viewModel::setHabitEditingPeriod,
+                onTargetChange = viewModel::setHabitEditingTarget, onIntervalDaysChange = viewModel::setHabitEditingIntervalDays,
+                onScheduleStartDateChange = viewModel::setHabitEditingScheduleStartDate,
+                onScheduleDayToggle = viewModel::toggleHabitEditingScheduleDay, onColorChange = viewModel::setHabitEditingColor,
+                onConfirm = viewModel::confirmHabitEditing, onCancel = viewModel::cancelHabitEditing,
+            )
+        },
         draftVisible = draftVisible,
         draftDate = LocalDate.ofEpochDay(draftDateEpochDay),
         draftTitle = draftTitle,
@@ -240,15 +285,13 @@ fun HomeRoute(
         onSetAccentColor = viewModel::setAccentColor,
         onDelete = viewModel::deleteTodo,
         onToggleCompletion = viewModel::toggleCompletion,
-        onTogglePriority = viewModel::togglePriority,
         onToggleHabit = { id, date -> viewModel.toggleHabit(id, date) },
         onMoveTodo = viewModel::moveTodo,
-        onMoveTodoToHomePosition = viewModel::moveTodoToHomePosition,
         onPreviousMonth = viewModel::loadPreviousMonth,
         onNextMonth = viewModel::loadNextMonth,
         modifier = modifier,
     ) else HomeScreen(
-        todos = todos,
+        todos = todos.map { it.withEditorPreview() },
         habits = habits,
         draftVisible = draftVisible,
         draftTitle = draftTitle,
@@ -279,6 +322,25 @@ fun HomeRoute(
         onStopRecurrence = viewModel::stopEditingRecurrence,
         onToggleCompletion = viewModel::toggleCompletion,
         onToggleHabit = { id -> viewModel.toggleHabit(id) },
+        habitEditingId = habitEditingId,
+        habitEditingTitle = habitEditingTitle,
+        habitEditingPeriod = habitEditingPeriod,
+        habitEditingTarget = habitEditingTarget,
+        habitEditingIntervalDays = habitEditingIntervalDays,
+        habitEditingScheduleStartDate = habitEditingScheduleStartDate,
+        habitEditingScheduleDays = habitEditingScheduleDays,
+        habitEditingColor = habitEditingColor,
+        onStartHabitEditing = viewModel::startEditingHabit,
+        onHabitEditingTitleChange = viewModel::updateHabitEditingTitle,
+        onHabitEditingPeriodChange = viewModel::setHabitEditingPeriod,
+        onHabitEditingTargetChange = viewModel::setHabitEditingTarget,
+        onHabitEditingIntervalDaysChange = viewModel::setHabitEditingIntervalDays,
+        onHabitEditingScheduleStartDateChange = viewModel::setHabitEditingScheduleStartDate,
+        onHabitEditingScheduleDayToggle = viewModel::toggleHabitEditingScheduleDay,
+        onHabitEditingColorChange = viewModel::setHabitEditingColor,
+        onConfirmHabitEditing = viewModel::confirmHabitEditing,
+        onCancelHabitEditing = viewModel::cancelHabitEditing,
+        onDeleteHabit = viewModel::deleteHabit,
         editingId = editingId,
         editingTitle = editingTitle,
         onStartEditing = viewModel::startEditing,
@@ -293,9 +355,9 @@ fun HomeRoute(
         onDelete = viewModel::deleteTodo,
         onReorderTodo = { id, targetId, after -> viewModel.reorderTodoWithinGroup(selectedDate, id, targetId, after) },
         selectedDate = selectedDate,
-        onDateChange = onDateChange,
-        onMoveTodo = viewModel::moveTodo,
-        modifier = modifier,
+         onDateChange = onDateChange,
+         onMoveTodo = viewModel::moveTodo,
+         modifier = modifier,
     )
     }
 }
@@ -348,6 +410,25 @@ fun HomeScreen(
     onStopRecurrence: () -> Unit,
     onToggleCompletion: (String) -> Unit,
     onToggleHabit: (String) -> Unit,
+    habitEditingId: String?,
+    habitEditingTitle: String,
+    habitEditingPeriod: HabitPeriod,
+    habitEditingTarget: Int,
+    habitEditingIntervalDays: Int,
+    habitEditingScheduleStartDate: LocalDate,
+    habitEditingScheduleDays: Set<Int>,
+    habitEditingColor: Long,
+    onStartHabitEditing: (HabitWeekItem) -> Unit,
+    onHabitEditingTitleChange: (String) -> Unit,
+    onHabitEditingPeriodChange: (HabitPeriod) -> Unit,
+    onHabitEditingTargetChange: (Int) -> Unit,
+    onHabitEditingIntervalDaysChange: (Int) -> Unit,
+    onHabitEditingScheduleStartDateChange: (LocalDate) -> Unit,
+    onHabitEditingScheduleDayToggle: (Int) -> Unit,
+    onHabitEditingColorChange: (Long?) -> Unit,
+    onConfirmHabitEditing: () -> Unit,
+    onCancelHabitEditing: () -> Unit,
+    onDeleteHabit: (String) -> Unit,
     editingId: String,
     editingTitle: String,
     onStartEditing: (TodoOccurrence) -> Unit,
@@ -368,8 +449,24 @@ fun HomeScreen(
 ) {
     val density = LocalDensity.current
     val imeBottom = WindowInsets.ime.getBottom(density)
-    val imeVisible = imeBottom > 0
     val listState = rememberLazyListState()
+    var deletingHabit by remember { mutableStateOf<HabitWeekItem?>(null) }
+    deletingHabit?.let { habit ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { deletingHabit = null },
+            title = { Text("删除「${habit.title}」？") },
+            text = { Text("此习惯会从主页和习惯页移除；其他习惯不受影响。") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    onDeleteHabit(habit.id)
+                    deletingHabit = null
+                }) { Text("删除此习惯") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { deletingHabit = null }) { Text("取消") }
+            },
+        )
+    }
     val draftBringIntoViewRequester = remember { BringIntoViewRequester() }
     var draftContentSize by remember { mutableStateOf(IntSize.Zero) }
     LaunchedEffect(draftVisible) {
@@ -443,16 +540,185 @@ fun HomeScreen(
     }
 
     val sections = buildHomeDisplaySections(selectedDate, todos, habits)
-    val todoBounds = remember(selectedDate) { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.layout.LayoutCoordinates>() }
+    val currentSections by rememberUpdatedState(sections)
+    val currentTodos by rememberUpdatedState(todos)
+    val currentHabits by rememberUpdatedState(habits)
+    val commitCompletion by rememberUpdatedState(onToggleCompletion)
+    val context = LocalContext.current
+    var dayOrder by remember(selectedDate) { mutableStateOf<HomeDayOrder?>(null) }
+    val itemsAtRest = dayOrder?.applyTo(sections) ?: sections.singleDayItems()
+    val measuredSlots = remember(selectedDate) { mutableMapOf<String, Int>() }
+    val measuredBounds = remember(selectedDate) { mutableMapOf<String, Rect>() }
+    var completionScene by remember(selectedDate) { mutableStateOf<HomeCompletionScene?>(null) }
+    var motionTime by remember(selectedDate) { mutableFloatStateOf(0f) }
+    var targetAlpha by remember(selectedDate) { mutableFloatStateOf(0f) }
+    var targetItem by remember(selectedDate) { mutableStateOf<HomeDisplayItem?>(null) }
+
+    // There is one owner and one clock. The source item no longer starts a
+    // second coroutine or persists independently when its gesture completes.
+    LaunchedEffect(completionScene) {
+        val scene = completionScene ?: return@LaunchedEffect
+        animate(0f, 1f, animationSpec = tween(720, easing = androidx.compose.animation.core.LinearEasing)) { value, _ ->
+            motionTime = value
+        }
+        // Both slots have reached their final geometry; the outgoing card is
+        // fully outside the viewport. Commit exactly once, keeping the frozen
+        // scene until Room acknowledges the state instead of letting a Flow
+        // emission change the list layout in the middle of the animation.
+        when (val source = scene.source) {
+            is HomeDisplayItem.Todo -> commitCompletion(source.value.id)
+            is HomeDisplayItem.Habit -> onToggleHabit(source.value.id)
+        }
+        val saved = kotlinx.coroutines.withTimeoutOrNull(4_000L) {
+            androidx.compose.runtime.snapshotFlow {
+                when (val source = scene.source) {
+                    is HomeDisplayItem.Todo -> currentTodos.firstOrNull { it.id == source.value.id }
+                        ?.let { HomeDisplayItem.Todo(it) }
+                    is HomeDisplayItem.Habit -> buildHomeDisplaySections(selectedDate, currentTodos, currentHabits)
+                        .open.plus(buildHomeDisplaySections(selectedDate, currentTodos, currentHabits).completed)
+                        .firstOrNull { it.stableKey == source.stableKey }
+                }
+            }.first { current -> current == null || current.isCompleteOnHome != scene.source.isCompleteOnHome }
+        }
+        if (saved == null) {
+            // A rejected/deleted record must not strand the page in a blank
+            // target slot. Reopen the source gap and return to the real facts.
+            animate(1f, 0f, animationSpec = tween(260)) { value, _ -> motionTime = value }
+            completionScene = null
+            if (when (val source = scene.source) {
+                    is HomeDisplayItem.Todo -> currentTodos.any { it.id == source.value.id }
+                    is HomeDisplayItem.Habit -> currentHabits.any { it.id == source.value.id }
+                }) {
+                Toast.makeText(context, "完成状态暂未保存，请重试", Toast.LENGTH_SHORT).show()
+            }
+            return@LaunchedEffect
+        }
+        targetItem = saved
+        animate(0f, 1f, animationSpec = tween(300)) { value, _ -> targetAlpha = value }
+        dayOrder = HomeDayOrder.capture(scene.before.moveAcrossDivider(saved), currentSections)
+        // The target has exactly the same pixels before and after this switch;
+        // there is no temporary prepend followed by a canonical-order snap.
+        completionScene = null
+    }
+
+    val scene = completionScene
+    val displayedItems = scene?.before ?: itemsAtRest
+    val frame = HomeCompletionFrame.at(motionTime)
+    val slotHeights = scene?.let { homeCompletionSlotHeights(it.sourceSlotHeightPx, frame.reflow) }
+    val renderEntry: @Composable (HomeDisplayItem) -> Unit = { entry ->
+        when (entry) {
+            is HomeDisplayItem.Todo -> HomeTodoEntry(
+                todo = entry.value, editingId = editingId, editingTitle = editingTitle,
+                editingRecurrence = editingRecurrence, editingReminderTimes = editingReminderTimes,
+                editingScope = editingScope, goals = goals, editingGoalIds = editingGoalIds,
+                onToggleCompletion = onToggleCompletion, onStartEditing = onStartEditing,
+                onEditingTitleChange = onEditingTitleChange, onConfirmEditing = onConfirmEditing,
+                onCancelEditing = onCancelEditing, onEditingRecurrenceSelected = onEditingRecurrenceSelected,
+                onEditingReminderToggled = onEditingReminderToggled, onEditingReminderAdd = onEditingReminderAdd,
+                onEditingReminderEdit = onEditingReminderEdit, onEditingReminderRemove = onEditingReminderRemove,
+                onEditingScopeSelected = onEditingScopeSelected, onStopRecurrence = onStopRecurrence,
+                onToggleEditingGoal = onToggleEditingGoal, onSetAccentColor = onSetAccentColor,
+                onTogglePriority = onTogglePriority, onDelete = onDelete,
+                interactionsEnabled = scene == null,
+                completionStampInitiallyVisible = dayOrder?.completedKeys?.contains(entry.stableKey) == true,
+                onCompletionRequest = { request ->
+                    if (completionScene == null) {
+                        motionTime = 0f
+                        targetAlpha = 0f
+                        targetItem = null
+                        completionScene = HomeCompletionScene(
+                            source = entry,
+                            before = itemsAtRest,
+                            request = request,
+                            sourceSlotHeightPx = measuredSlots[entry.stableKey]
+                                ?: (request.bounds.height + with(density) { 8.dp.toPx() }).roundToInt(),
+                        )
+                    }
+                },
+                onDragPosition = {},
+                onDragFinished = if (scene == null) ({ _: Offset -> }) else null,
+                dragGroup = if (entry.value.isCompleted) "home-completed" else "home-open",
+            )
+            is HomeDisplayItem.Habit -> {
+                if (habitEditingId == entry.value.id) {
+                    DaveHabitEditor(
+                        title = habitEditingTitle,
+                        period = habitEditingPeriod,
+                        target = habitEditingTarget,
+                        intervalDays = habitEditingIntervalDays,
+                        scheduleStartDate = habitEditingScheduleStartDate,
+                        scheduleDays = habitEditingScheduleDays,
+                        color = habitEditingColor,
+                        onTitleChange = onHabitEditingTitleChange,
+                        onPeriodChange = onHabitEditingPeriodChange,
+                        onTargetChange = onHabitEditingTargetChange,
+                        onIntervalDaysChange = onHabitEditingIntervalDaysChange,
+                        onScheduleStartDateChange = onHabitEditingScheduleStartDateChange,
+                        onScheduleDayToggle = onHabitEditingScheduleDayToggle,
+                        onColorChange = onHabitEditingColorChange,
+                        onConfirm = onConfirmHabitEditing,
+                        onCancel = onCancelHabitEditing,
+                    )
+                } else {
+                    val startHabitCompletion: (com.fishking.core.ui.DaveTaskCompletionRequest) -> Unit = { request ->
+                        if (completionScene == null) {
+                            motionTime = 0f
+                            targetAlpha = 0f
+                            targetItem = null
+                            completionScene = HomeCompletionScene(
+                                source = entry,
+                                before = itemsAtRest,
+                                request = request,
+                                sourceSlotHeightPx = measuredSlots[entry.stableKey]
+                                    ?: (request.bounds.height + with(density) { 8.dp.toPx() }).roundToInt(),
+                            )
+                        }
+                    }
+                    val onHabitTap = {
+                        if (completionScene == null) {
+                            if (!entry.willCrossCompletionOnTap()) {
+                                onToggleHabit(entry.value.id)
+                            } else {
+                                val bounds = measuredBounds[entry.stableKey]
+                                if (bounds == null || bounds.width <= 0f) {
+                                    onToggleHabit(entry.value.id)
+                                } else {
+                                    startHabitCompletion(com.fishking.core.ui.DaveTaskCompletionRequest(bounds, 0f, 0f))
+                                }
+                            }
+                        }
+                    }
+                    DaveSwipeHabitCard(
+                        title = entry.value.title, count = entry.count, targetCount = entry.value.targetCount,
+                        period = entry.value.period, color = entry.value.color, isBackfilled = entry.isBackfilled,
+                        intervalDays = entry.value.intervalDays,
+                        checkedOnDate = entry.checkedOnDate,
+                        onClick = onHabitTap,
+                        onEdit = { if (completionScene == null) onStartHabitEditing(entry.value) },
+                        onDelete = { if (completionScene == null) deletingHabit = entry.value },
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
+                        onDragFinished = if (scene == null && !entry.isComplete) ({ _: Offset -> }) else null,
+                        dragGroup = if (entry.isComplete) "home-completed" else "home-open",
+                        dragId = entry.value.id,
+                        onCompletionRequest = startHabitCompletion,
+                        completionCrossesDivider = entry.willCrossCompletionOnTap(),
+                        interactionsEnabled = scene == null,
+                        checkAnimationMillis = if (dayOrder?.completedKeys?.contains(entry.stableKey) == true) 1 else 300,
+                    )
+                }
+            }
+        }
+    }
 
     com.fishking.core.ui.DaveDateDropArea(
         date = selectedDate,
         onMove = onMoveTodo,
-        modifier = modifier.clipToBounds(),
+        modifier = modifier,
         onDrop = { _, _ -> false },
     ) {
         LazyColumn(
             state = listState,
+            userScrollEnabled = scene == null,
             modifier = Modifier
                 .fillMaxSize()
                 .onSizeChanged { viewportHeightPx = it.height.toFloat() }
@@ -469,6 +735,7 @@ fun HomeScreen(
                     ) {
                         DaveInlineDraftCard(
                             value = draftTitle,
+                            accentColor = draftAccent?.let(::Color),
                             onValueChange = onDraftChange,
                             onConfirm = onConfirmDraft,
                             onCancelEmpty = onCancelEmptyDraft,
@@ -489,124 +756,187 @@ fun HomeScreen(
                     }
                 }
             }
-            sections.open.forEach { entry ->
-                item(key = entry.stableKey) {
-                    when (entry) {
-                        is HomeDisplayItem.Todo -> HomeTodoEntry(
-                            todo = entry.value, editingId = editingId, editingTitle = editingTitle,
-                            editingRecurrence = editingRecurrence, editingReminderTimes = editingReminderTimes,
-                            editingScope = editingScope, goals = goals, editingGoalIds = editingGoalIds,
-                            onToggleCompletion = onToggleCompletion, onStartEditing = onStartEditing,
-                            onEditingTitleChange = onEditingTitleChange, onConfirmEditing = onConfirmEditing,
-                            onCancelEditing = onCancelEditing, onEditingRecurrenceSelected = onEditingRecurrenceSelected,
-                            onEditingReminderToggled = onEditingReminderToggled, onEditingReminderAdd = onEditingReminderAdd,
-                            onEditingReminderEdit = onEditingReminderEdit, onEditingReminderRemove = onEditingReminderRemove,
-                            onEditingScopeSelected = onEditingScopeSelected, onStopRecurrence = onStopRecurrence,
-                            onToggleEditingGoal = onToggleEditingGoal, onSetAccentColor = onSetAccentColor,
-                            onTogglePriority = onTogglePriority, onDelete = onDelete,
-                            onBoundsChanged = { todoBounds[entry.value.id] = it },
-                            onDragPosition = {},
-                            onDragFinished = {},
-                            dragGroup = "home-open",
-                        )
-                        is HomeDisplayItem.Habit -> DaveHabitCard(
-                            title = entry.value.title, count = entry.count, targetCount = entry.value.targetCount,
-                            period = entry.value.period, color = entry.value.color, isBackfilled = entry.isBackfilled,
-                            intervalDays = entry.value.intervalDays,
-                            checkedOnDate = entry.checkedOnDate, onClick = { onToggleHabit(entry.value.id) },
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
-                            onDragFinished = {}, dragGroup = "home-open", dragId = entry.value.id,
-                        )
+            displayedItems.open.forEach { entry ->
+                item(key = if (scene?.sourceKey == entry.stableKey) "completion-source-gap-${entry.stableKey}" else entry.stableKey) {
+                    if (scene != null && entry.stableKey == scene.sourceKey) {
+                        HomeCompletionGap(requireNotNull(slotHeights).source)
+                    } else {
+                        Box(
+                            Modifier
+                                .onSizeChanged { measuredSlots[entry.stableKey] = it.height }
+                                .onGloballyPositioned { measuredBounds[entry.stableKey] = it.boundsInRoot() },
+                        ) {
+                            renderEntry(entry)
+                        }
                     }
                 }
             }
-            if (sections.isEmpty && !draftVisible) {
-                item(key = "empty") {
-                    Text(
-                        text = "点右下角 ＋，直接写下一件事",
-                        color = DavePalette.Ink.copy(alpha = .58f),
-                        fontSize = 15.sp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 64.dp),
-                        textAlign = TextAlign.Center,
+            // Undo inserts its growing slot directly BEFORE the divider.
+            // The unchanged open cards therefore never move.
+            if (scene != null && scene.source.isCompleteOnHome) {
+                item(key = scene.destinationKey) {
+                    HomeCompletionTarget(
+                        heightPx = requireNotNull(slotHeights).destination,
+                        item = targetItem,
+                        alpha = targetAlpha,
                     )
                 }
             }
-            if (sections.completed.isNotEmpty()) {
+            if (displayedItems.completed.isNotEmpty() || scene != null) {
                 item(key = "completed-divider") {
                     Spacer(
                         Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 18.dp, vertical = 10.dp)
                             .height(1.dp)
+                            .graphicsLayer {
+                                alpha = if (scene != null && displayedItems.completed.isEmpty()) frame.reflow else 1f
+                            }
                             .background(DavePalette.Divider),
                     )
                 }
-                sections.completedUrgent.forEach { entry ->
-                    item(key = entry.stableKey) {
-                        HomeTodoEntry(
-                            todo = entry.value, editingId = editingId, editingTitle = editingTitle,
-                            editingRecurrence = editingRecurrence, editingReminderTimes = editingReminderTimes,
-                            editingScope = editingScope, goals = goals, editingGoalIds = editingGoalIds,
-                            onToggleCompletion = onToggleCompletion, onStartEditing = onStartEditing,
-                            onEditingTitleChange = onEditingTitleChange, onConfirmEditing = onConfirmEditing,
-                            onCancelEditing = onCancelEditing, onEditingRecurrenceSelected = onEditingRecurrenceSelected,
-                            onEditingReminderToggled = onEditingReminderToggled, onEditingReminderAdd = onEditingReminderAdd,
-                            onEditingReminderEdit = onEditingReminderEdit, onEditingReminderRemove = onEditingReminderRemove,
-                            onEditingScopeSelected = onEditingScopeSelected, onStopRecurrence = onStopRecurrence,
-                            onToggleEditingGoal = onToggleEditingGoal, onSetAccentColor = onSetAccentColor,
-                            onTogglePriority = onTogglePriority, onDelete = onDelete,
-                            onBoundsChanged = { todoBounds[entry.value.id] = it },
-                            onDragFinished = {},
-                        )
-                    }
+            }
+            // Complete inserts its growing slot directly AFTER the divider.
+            // Its growth exactly cancels source shrink for all existing
+            // completed cards, so they remain stationary throughout.
+            if (scene != null && !scene.source.isCompleteOnHome) {
+                item(key = scene.destinationKey) {
+                    HomeCompletionTarget(
+                        heightPx = requireNotNull(slotHeights).destination,
+                        item = targetItem,
+                        alpha = targetAlpha,
+                    )
                 }
-                sections.completedNormal.forEach { entry ->
-                    item(key = entry.stableKey) {
-                        HomeTodoEntry(
-                            todo = entry.value, editingId = editingId, editingTitle = editingTitle,
-                            editingRecurrence = editingRecurrence, editingReminderTimes = editingReminderTimes,
-                            editingScope = editingScope, goals = goals, editingGoalIds = editingGoalIds,
-                            onToggleCompletion = onToggleCompletion, onStartEditing = onStartEditing,
-                            onEditingTitleChange = onEditingTitleChange, onConfirmEditing = onConfirmEditing,
-                            onCancelEditing = onCancelEditing, onEditingRecurrenceSelected = onEditingRecurrenceSelected,
-                            onEditingReminderToggled = onEditingReminderToggled, onEditingReminderAdd = onEditingReminderAdd,
-                            onEditingReminderEdit = onEditingReminderEdit, onEditingReminderRemove = onEditingReminderRemove,
-                            onEditingScopeSelected = onEditingScopeSelected, onStopRecurrence = onStopRecurrence,
-                            onToggleEditingGoal = onToggleEditingGoal, onSetAccentColor = onSetAccentColor,
-                            onTogglePriority = onTogglePriority, onDelete = onDelete,
-                            onBoundsChanged = { todoBounds[entry.value.id] = it },
-                            onDragFinished = {},
-                        )
-                    }
-                }
-                sections.completedHabits.forEach { entry ->
-                    item(key = entry.stableKey) {
-                        DaveHabitCard(
-                            title = entry.value.title, count = entry.count, targetCount = entry.value.targetCount,
-                            period = entry.value.period, color = entry.value.color, isBackfilled = entry.isBackfilled,
-                            intervalDays = entry.value.intervalDays,
-                            checkedOnDate = entry.checkedOnDate, onClick = { onToggleHabit(entry.value.id) },
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
-                        )
+            }
+            displayedItems.completed.forEach { entry ->
+                item(key = if (scene?.sourceKey == entry.stableKey) "completion-source-gap-${entry.stableKey}" else entry.stableKey) {
+                    if (scene != null && entry.stableKey == scene.sourceKey) {
+                        HomeCompletionGap(requireNotNull(slotHeights).source)
+                    } else {
+                        Box(
+                            Modifier
+                                .onSizeChanged { measuredSlots[entry.stableKey] = it.height }
+                                .onGloballyPositioned { measuredBounds[entry.stableKey] = it.boundsInRoot() },
+                        ) {
+                            renderEntry(entry)
+                        }
                     }
                 }
             }
-            item { Spacer(Modifier.height(112.dp)) }
+            if (!draftVisible && scene == null) {
+                item(key = "home-inline-add") {
+                    DaveListInlineAddAction(
+                        contentDescription = "新建当天待办",
+                        enabled = true,
+                        onClick = onStartDraft,
+                    )
+                }
+            }
+            item(key = "home-footer") { Spacer(Modifier.height(112.dp)) }
         }
 
-        if (!imeVisible) Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(22.dp)
-                .size(62.dp)
-                .clip(CircleShape)
-                .background(DavePalette.Completed, CircleShape)
-                .clickable(enabled = !draftVisible, onClick = onStartDraft),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("+", color = androidx.compose.ui.graphics.Color.White, fontSize = 39.sp)
+        if (scene != null) {
+            // Absorb new touches while the transaction owns the two slots.
+            // This does not clip the visual-only flight drawn above it.
+            Box(
+                Modifier.matchParentSize().zIndex(10f).pointerInput(scene.source.stableKey) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            awaitPointerEvent().changes.forEach { it.consume() }
+                        }
+                    }
+                },
+            )
+            when (val source = scene.source) {
+                is HomeDisplayItem.Todo -> com.fishking.core.ui.DaveCompletionFlight(
+                    todo = source.value,
+                    request = scene.request,
+                    containerBounds = viewportBounds,
+                    progress = frame.flight,
+                )
+                is HomeDisplayItem.Habit -> DaveHabitCompletionFlight(
+                    title = source.value.title,
+                    count = source.count,
+                    targetCount = source.value.targetCount,
+                    period = source.value.period,
+                    color = source.value.color,
+                    isBackfilled = source.isBackfilled,
+                    checkedOnDate = source.checkedOnDate,
+                    intervalDays = source.value.intervalDays,
+                    request = scene.request,
+                    containerBounds = viewportBounds,
+                    progress = frame.flight,
+                    completing = !source.isComplete,
+                )
+            }
+        }
+
+        DaveScreenFloatingAddAction(
+            section = FishKingSection.HOME,
+            enabled = !draftVisible && scene == null,
+            onClick = onStartDraft,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(22.dp),
+        )
+    }
+}
+
+private data class HomeCompletionScene(
+    val source: HomeDisplayItem,
+    val before: HomeDayItems,
+    val request: com.fishking.core.ui.DaveTaskCompletionRequest,
+    val sourceSlotHeightPx: Int,
+) {
+    val sourceKey: String get() = source.stableKey
+    // The only visible item retains its business key at the target and at rest.
+    // The collapsing source is a separately keyed, draw-free spacer.
+    val destinationKey: String get() = source.stableKey
+}
+
+@Composable
+private fun HomeCompletionGap(heightPx: Int) {
+    val density = LocalDensity.current
+    Spacer(Modifier.fillMaxWidth().height(with(density) { heightPx.toDp() }))
+}
+
+@Composable
+private fun HomeCompletionTarget(heightPx: Int, item: HomeDisplayItem?, alpha: Float) {
+    val density = LocalDensity.current
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(with(density) { heightPx.toDp() })
+            .clipToBounds(),
+    ) {
+        if (item != null) {
+            Box(Modifier.graphicsLayer { this.alpha = alpha }) {
+                when (item) {
+                    is HomeDisplayItem.Todo -> com.fishking.core.ui.DaveTaskCard(
+                        todo = item.value,
+                        onToggleCompletion = {},
+                        readOnly = true,
+                    // CLEAR has already been resolved by the shared gesture /
+                    // flight clock; landing must not start it again.
+                    completionStampInitiallyVisible = item.isCompleteOnHome,
+                        checkAnimationMillis = 1,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
+                    )
+                    is HomeDisplayItem.Habit -> DaveHabitCard(
+                        title = item.value.title,
+                        count = item.count,
+                        targetCount = item.value.targetCount,
+                        period = item.value.period,
+                        color = item.value.color,
+                        isBackfilled = item.isBackfilled,
+                        checkedOnDate = item.checkedOnDate,
+                        onClick = {},
+                        readOnly = true,
+                        intervalDays = item.value.intervalDays,
+                        completionStampInitiallyVisible = item.isCompleteOnHome,
+                        checkAnimationMillis = 1,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
+                    )
+                }
+            }
         }
     }
 }
@@ -637,15 +967,18 @@ private fun HomeTodoEntry(
     onSetAccentColor: (String, Long?) -> Unit,
     onTogglePriority: (String) -> Unit,
     onDelete: (String) -> Unit,
-    onBoundsChanged: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit,
+    onCompletionRequest: (com.fishking.core.ui.DaveTaskCompletionRequest) -> Unit,
+    interactionsEnabled: Boolean = true,
+    completionStampInitiallyVisible: Boolean = false,
     onDragPosition: ((Offset) -> Unit)? = null,
-    onDragFinished: (Offset) -> Unit,
+    onDragFinished: ((Offset) -> Unit)?,
     dragGroup: String = "${todo.displayDate}:open",
 ) {
     if (editingId == todo.id) {
         androidx.compose.foundation.layout.Column {
             DaveInlineDraftCard(
                 value = editingTitle,
+                accentColor = todo.accentColor?.let(::Color),
                 autoFocus = false,
                 onValueChange = onEditingTitleChange,
                 onConfirm = onConfirmEditing,
@@ -668,18 +1001,23 @@ private fun HomeTodoEntry(
             )
         }
     } else {
-        DaveSwipeTaskCard(
+        DaveHomeSwipeTaskCard(
             todo = todo,
             onToggleCompletion = { onToggleCompletion(todo.id) },
-            onTogglePriority = { onTogglePriority(todo.id) },
             onEdit = { onStartEditing(todo) },
             onDelete = { onDelete(todo.id) },
             onDragPosition = onDragPosition,
             onDragFinished = onDragFinished,
             dragGroup = dragGroup,
+            onSetAccentColor = { color -> onSetAccentColor(todo.id, color) },
+            onOpenArrange = { onStartEditing(todo) },
+            onOpenTags = { onStartEditing(todo) },
+            onCompletionRequest = onCompletionRequest,
+            interactionsEnabled = interactionsEnabled,
+            completionStampInitiallyVisible = completionStampInitiallyVisible,
+            checkAnimationMillis = if (completionStampInitiallyVisible) 1 else 300,
             modifier = Modifier
-                .padding(horizontal = 18.dp, vertical = 4.dp)
-                .onGloballyPositioned(onBoundsChanged),
+                .padding(horizontal = 18.dp, vertical = 4.dp),
         )
     }
 }

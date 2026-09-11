@@ -35,7 +35,7 @@ data class HabitVersion(
      */
     val effectiveFromDate: LocalDate,
     val effectiveUntilExclusive: LocalDate? = null,
-    /** The user-facing identity is versioned so historical weeks never change after an edit. */
+    /** Title follows dated versions. Colour is a global habit identity, synchronized across versions on recolouring. */
     val title: String,
     val color: Long,
     val period: HabitPeriod,
@@ -64,7 +64,7 @@ data class HabitDayRecord(
     val count: Int,
     val isBackfilled: Boolean,
     val updatedAt: Instant,
-    /** A historical backfill is real history but does not silently move a dynamic cadence. */
+    /** Legacy persistence flag; dynamic cadence now follows the latest real completion. */
     val affectsScheduleAnchor: Boolean = !isBackfilled,
 ) {
     init {

@@ -13,12 +13,14 @@ import com.fishking.core.model.RecurrenceRule
 import com.fishking.core.model.TodoReminderSpec
 import com.fishking.core.model.TodoChangeScope
 import com.fishking.core.model.HabitRules
+import com.fishking.core.model.HabitPeriod
 import com.fishking.core.model.HabitWeekItem
 import com.fishking.core.model.LifeGoalWithEvents
 import com.fishking.core.usecase.HomeRepository
 import com.fishking.core.usecase.HabitRepository
 import com.fishking.core.usecase.LifeRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +40,7 @@ class HomeViewModel(
     lifeRepository: LifeRepository,
 ) : ViewModel() {
     private val selectedDate = MutableStateFlow(LocalDate.now())
+    private var editingLoadJob: Job? = null
 
     val todos: StateFlow<List<TodoOccurrence>> = selectedDate
         .flatMapLatest(repository::observeTodos)
@@ -96,9 +99,11 @@ class HomeViewModel(
     fun setPlanScope(scope: com.fishking.core.model.TodoPlanScope) {
         if (editingId.value.isNotBlank()) {
             savedStateHandle["editingPlanScope"] = scope.name
+            if (scope != com.fishking.core.model.TodoPlanScope.DEADLINE) savedStateHandle["editingDeadline"] = ""
             if (scope != com.fishking.core.model.TodoPlanScope.DATE) savedStateHandle[EDITING_RECURRENCE] = RecurrenceFrequency.ONCE.name
         } else {
             savedStateHandle["draftPlanScope"] = scope.name
+            if (scope != com.fishking.core.model.TodoPlanScope.DEADLINE) savedStateHandle["draftDeadline"] = ""
             if (scope != com.fishking.core.model.TodoPlanScope.DATE) savedStateHandle[DRAFT_RECURRENCE] = RecurrenceFrequency.ONCE.name
         }
     }
@@ -109,9 +114,19 @@ class HomeViewModel(
     val draftGoalIds = savedStateHandle.getStateFlow(DRAFT_GOAL_IDS, "")
     val editingId = savedStateHandle.getStateFlow(EDITING_ID, "")
     val editingTitle = savedStateHandle.getStateFlow(EDITING_TITLE, "")
+    val editingAccentColor = savedStateHandle.getStateFlow(EDITING_ACCENT, NO_ACCENT)
     val editingRecurrence = savedStateHandle.getStateFlow(EDITING_RECURRENCE, RecurrenceFrequency.ONCE.name)
     val editingReminderTimes = savedStateHandle.getStateFlow(EDITING_REMINDERS, "")
     val editingScope = savedStateHandle.getStateFlow(EDITING_SCOPE, TodoChangeScope.ONLY_THIS.name)
+    val habitEditingId = MutableStateFlow<String?>(null)
+    val habitEditingDate = MutableStateFlow<LocalDate?>(null)
+    val habitEditingTitle = MutableStateFlow("")
+    val habitEditingPeriod = MutableStateFlow(HabitPeriod.DAILY)
+    val habitEditingTarget = MutableStateFlow(1)
+    val habitEditingIntervalDays = MutableStateFlow(DEFAULT_HABIT_INTERVAL_DAYS)
+    val habitEditingScheduleStartDate = MutableStateFlow(LocalDate.now())
+    val habitEditingScheduleDays = MutableStateFlow<Set<Int>>(emptySet())
+    val habitEditingColor = MutableStateFlow(DEFAULT_HABIT_COLOR)
     val draftDateEpochDay = savedStateHandle.getStateFlow(DRAFT_DATE, LocalDate.now().toEpochDay())
     val goals: StateFlow<List<LifeGoalWithEvents>> = lifeRepository.observeGoals()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -123,6 +138,7 @@ class HomeViewModel(
         if (selectedDate.value != date) {
             cancelDraft()
             cancelEditing()
+            cancelHabitEditing()
         }
         selectedDate.value = date
         viewModelScope.launch {
@@ -133,7 +149,9 @@ class HomeViewModel(
 
     fun startDraft(date: LocalDate = selectedDate.value) {
         savedStateHandle["draftPlanScope"] = "DATE"
+        savedStateHandle["draftDeadline"] = ""
         cancelEditing()
+        cancelHabitEditing()
         savedStateHandle[DRAFT_DATE] = date.toEpochDay()
         savedStateHandle[DRAFT_TITLE] = ""
         savedStateHandle[DRAFT_VISIBLE] = true
@@ -147,9 +165,15 @@ class HomeViewModel(
         savedStateHandle[DRAFT_TITLE] = value.replace('\n', ' ')
     }
 
+    fun setDraftDate(date: LocalDate) {
+        savedStateHandle[DRAFT_DATE] = date.toEpochDay()
+    }
+
     fun cancelDraft() {
         savedStateHandle[DRAFT_VISIBLE] = false
         savedStateHandle[DRAFT_TITLE] = ""
+        savedStateHandle["draftPlanScope"] = "DATE"
+        savedStateHandle["draftDeadline"] = ""
     }
 
     fun cancelDraftIfBlank() {
@@ -188,7 +212,10 @@ class HomeViewModel(
     }
 
     fun setDraftRecurrence(value: RecurrenceFrequency) {
-        if (value != RecurrenceFrequency.ONCE) savedStateHandle["draftPlanScope"] = "DATE"
+        if (value != RecurrenceFrequency.ONCE) {
+            savedStateHandle["draftPlanScope"] = "DATE"
+            savedStateHandle["draftDeadline"] = ""
+        }
         savedStateHandle[DRAFT_RECURRENCE] = value.name
     }
 
@@ -204,18 +231,29 @@ class HomeViewModel(
     }
 
     fun startEditing(todo: TodoOccurrence) {
+        // There is only one editor. Switching cards explicitly discards the
+        // previous local draft and cancels its asynchronous metadata load.
+        cancelEditing()
         savedStateHandle["editingPlanScope"] = todo.planScope.name
         savedStateHandle["editingDeadline"] = todo.planDeadline?.toString().orEmpty()
         cancelDraft()
+        cancelHabitEditing()
         savedStateHandle[EDITING_ID] = todo.id
         savedStateHandle[EDITING_TITLE] = todo.title
+        savedStateHandle[EDITING_ACCENT] = todo.accentColor ?: NO_ACCENT
         savedStateHandle[EDITING_RECURRENCE] = RecurrenceFrequency.ONCE.name
         savedStateHandle[EDITING_REMINDERS] = ""
         savedStateHandle[EDITING_SCOPE] = TodoChangeScope.ONLY_THIS.name
-        viewModelScope.launch {
-            savedStateHandle[EDITING_RECURRENCE] = (repository.recurrenceFor(todo.id)?.frequency
-                ?: RecurrenceFrequency.ONCE).name
-            savedStateHandle[EDITING_REMINDERS] = ReminderDrafts.encode(repository.remindersFor(todo.id).sortedBy { it.position }.map { TodoReminderSpec(it.dayOffset, it.localTime, it.position, it.isEnabled) })
+        editingLoadJob = viewModelScope.launch {
+            val recurrence = repository.recurrenceFor(todo.id)?.frequency ?: RecurrenceFrequency.ONCE
+            val reminders = repository.remindersFor(todo.id).sortedBy { it.position }
+                .map { TodoReminderSpec(it.dayOffset, it.localTime, it.position, it.isEnabled) }
+            // A slow Room read from the previous card must never overwrite the
+            // editor that the user has already switched to.
+            if (editingId.value != todo.id) return@launch
+            savedStateHandle[EDITING_RECURRENCE] = recurrence.name
+            savedStateHandle[EDITING_REMINDERS] = ReminderDrafts.encode(reminders)
+            editingLoadJob = null
         }
     }
 
@@ -224,11 +262,16 @@ class HomeViewModel(
     }
 
     fun cancelEditing() {
+        editingLoadJob?.cancel()
+        editingLoadJob = null
         savedStateHandle[EDITING_ID] = ""
         savedStateHandle[EDITING_TITLE] = ""
+        savedStateHandle[EDITING_ACCENT] = NO_ACCENT
         savedStateHandle[EDITING_RECURRENCE] = RecurrenceFrequency.ONCE.name
         savedStateHandle[EDITING_REMINDERS] = ""
         savedStateHandle[EDITING_SCOPE] = TodoChangeScope.ONLY_THIS.name
+        savedStateHandle["editingPlanScope"] = "DATE"
+        savedStateHandle["editingDeadline"] = ""
     }
 
     fun cancelEditingIfBlank() {
@@ -239,10 +282,12 @@ class HomeViewModel(
         val id = editingId.value
         val title = editingTitle.value.trim()
         if (id.isEmpty() || title.isEmpty()) return
+        val accent = editingAccentColor.value.takeUnless { it == NO_ACCENT }
         viewModelScope.launch {
             val scope = TodoChangeScope.valueOf(editingScope.value)
             val selectedRecurrence = RecurrenceFrequency.valueOf(editingRecurrence.value)
             repository.updateTitle(id, title, scope)
+            repository.setAccentColor(id, accent, scope)
             val currentRecurrence = repository.recurrenceFor(id)?.frequency ?: RecurrenceFrequency.ONCE
             if (currentRecurrence != selectedRecurrence) {
                 repository.updateRecurrence(id, RecurrenceRule(selectedRecurrence))
@@ -270,7 +315,10 @@ class HomeViewModel(
     }
 
     fun setEditingRecurrence(value: RecurrenceFrequency) {
-        if (value != RecurrenceFrequency.ONCE) savedStateHandle["editingPlanScope"] = "DATE"
+        if (value != RecurrenceFrequency.ONCE) {
+            savedStateHandle["editingPlanScope"] = "DATE"
+            savedStateHandle["editingDeadline"] = ""
+        }
         savedStateHandle[EDITING_RECURRENCE] = value.name
     }
 
@@ -299,23 +347,136 @@ class HomeViewModel(
     }
 
     fun setAccentColor(id: String, color: Long?) {
-        viewModelScope.launch { repository.setAccentColor(id, color) }
+        if (editingId.value == id) {
+            // Colour is part of this edit draft: preview synchronously, persist
+            // with the same confirmation/scope as its title, discard on cancel.
+            savedStateHandle[EDITING_ACCENT] = color ?: NO_ACCENT
+        } else viewModelScope.launch { repository.setAccentColor(id, color) }
     }
 
-    fun setPrimaryReminderTime(id: String, time: LocalTime) {
+    fun setPrimaryReminderTime(id: String, time: LocalTime, dayOffset: Int? = null) {
         viewModelScope.launch {
             val reminders = repository.remindersFor(id).sortedWith(compareBy({ it.dayOffset }, { it.localTime }))
             val firstEnabled = reminders.indexOfFirst { it.isEnabled }
             val specs = reminders.mapIndexed { index, reminder ->
-                TodoReminderSpec(reminder.dayOffset, if (index == firstEnabled) time else reminder.localTime, reminder.position, reminder.isEnabled)
+                TodoReminderSpec(if (index == firstEnabled) dayOffset ?: reminder.dayOffset else reminder.dayOffset,
+                    if (index == firstEnabled) time else reminder.localTime, reminder.position, reminder.isEnabled)
             }.toMutableList()
-            if (firstEnabled < 0) specs.add(TodoReminderSpec(localTime = time))
+            if (firstEnabled < 0) specs.add(TodoReminderSpec(dayOffset = dayOffset ?: 0, localTime = time))
             repository.setReminders(id, specs, TodoChangeScope.ONLY_THIS)
         }
     }
 
     fun toggleHabit(id: String, date: LocalDate = selectedDate.value) {
         viewModelScope.launch { habitRepository.toggleCheckIn(id, date) }
+    }
+
+    fun setHabitColor(habit: HabitWeekItem, color: Long, date: LocalDate = selectedDate.value) {
+        val rule = habit.ruleOn(date)
+        viewModelScope.launch {
+            habitRepository.updateHabitWithSchedule(
+                habitId = habit.id,
+                effectiveFromDate = date,
+                title = rule.title,
+                color = color,
+                period = rule.period,
+                targetCount = rule.targetCount,
+                scheduleDays = rule.scheduleDays,
+                intervalDays = rule.intervalDays,
+                scheduleStartDate = rule.scheduleStartDate,
+            )
+        }
+    }
+
+    fun startEditingHabit(habit: HabitWeekItem) = startEditingHabit(habit, selectedDate.value)
+
+    fun startEditingHabit(habit: HabitWeekItem, date: LocalDate) {
+        cancelDraft()
+        cancelEditing()
+        val rule = habit.ruleOn(date)
+        habitEditingId.value = habit.id
+        habitEditingDate.value = date
+        habitEditingTitle.value = rule.title
+        habitEditingPeriod.value = rule.period
+        habitEditingTarget.value = rule.targetCount
+        habitEditingIntervalDays.value = rule.intervalDays
+        habitEditingScheduleStartDate.value = rule.scheduleStartDate
+        habitEditingScheduleDays.value = rule.scheduleDays
+        habitEditingColor.value = rule.color
+    }
+
+    fun updateHabitEditingTitle(value: String) {
+        habitEditingTitle.value = value.replace('\n', ' ')
+    }
+
+    fun setHabitEditingPeriod(value: HabitPeriod) {
+        if (habitEditingPeriod.value == value) return
+        habitEditingPeriod.value = value
+        habitEditingTarget.value = if (value.isIntervalMode()) {
+            1
+        } else {
+            habitEditingTarget.value.coerceAtMost(value.maximumTargetCount())
+        }
+        habitEditingScheduleDays.value = emptySet()
+    }
+
+    fun setHabitEditingTarget(value: Int) {
+        habitEditingTarget.value = value.coerceIn(1, habitEditingPeriod.value.maximumTargetCount())
+    }
+
+    fun setHabitEditingIntervalDays(value: Int) {
+        habitEditingIntervalDays.value = value.coerceIn(1, MAX_HABIT_INTERVAL_DAYS)
+    }
+
+    fun setHabitEditingScheduleStartDate(value: LocalDate) {
+        habitEditingScheduleStartDate.value = value
+    }
+
+    fun toggleHabitEditingScheduleDay(value: Int) {
+        habitEditingScheduleDays.value = habitEditingScheduleDays.value.toMutableSet().apply {
+            if (!add(value)) remove(value)
+        }
+    }
+
+    fun setHabitEditingColor(value: Long?) {
+        habitEditingColor.value = value ?: DEFAULT_HABIT_COLOR
+    }
+
+    fun cancelHabitEditing() {
+        habitEditingId.value = null
+        habitEditingDate.value = null
+        habitEditingTitle.value = ""
+    }
+
+    fun confirmHabitEditing() {
+        val habitId = habitEditingId.value ?: return
+        val editingDate = habitEditingDate.value ?: selectedDate.value
+        val title = habitEditingTitle.value.trim()
+        if (title.isEmpty()) return
+        if (habitScheduleError(habitEditingPeriod.value, habitEditingTarget.value, habitEditingScheduleDays.value) != null) return
+        val effectiveDate = if (habitEditingPeriod.value.isIntervalMode()) {
+            minOf(editingDate, habitEditingScheduleStartDate.value)
+        } else editingDate
+        viewModelScope.launch {
+            habitRepository.updateHabitWithSchedule(
+                habitId = habitId,
+                effectiveFromDate = effectiveDate,
+                title = title,
+                color = habitEditingColor.value,
+                period = habitEditingPeriod.value,
+                targetCount = if (habitEditingPeriod.value.isIntervalMode()) 1 else habitEditingTarget.value,
+                scheduleDays = if (habitEditingPeriod.value.isIntervalMode()) emptySet() else habitEditingScheduleDays.value,
+                intervalDays = habitEditingIntervalDays.value,
+                scheduleStartDate = habitEditingScheduleStartDate.value,
+                replaceFutureSchedule = true,
+            )
+            cancelHabitEditing()
+        }
+    }
+
+    fun deleteHabit(habitId: String) {
+        if (habitEditingId.value == habitId) cancelHabitEditing()
+        viewModelScope.launch { habitRepository.deleteHabit(habitId) }
     }
 
     fun moveTodo(id: String, targetDate: LocalDate) {
@@ -396,11 +557,15 @@ class HomeViewModel(
         private const val DRAFT_GOAL_IDS = "home_draft_goal_ids"
         private const val EDITING_ID = "home_editing_id"
         private const val EDITING_TITLE = "home_editing_title"
+        private const val EDITING_ACCENT = "home_editing_accent"
         private const val EDITING_RECURRENCE = "home_editing_recurrence"
         private const val EDITING_REMINDERS = "home_editing_reminders"
         private const val EDITING_SCOPE = "home_editing_scope"
         private const val DRAFT_DATE = "home_draft_date"
         private const val NO_ACCENT = Long.MIN_VALUE
+        private const val DEFAULT_HABIT_COLOR = 0xFF8FA7E4L
+        private const val DEFAULT_HABIT_INTERVAL_DAYS = 3
+        private const val MAX_HABIT_INTERVAL_DAYS = 365
 
         fun factory(
             repository: HomeRepository,
@@ -411,3 +576,24 @@ class HomeViewModel(
         }
     }
 }
+
+private fun habitScheduleError(period: HabitPeriod, targetCount: Int, scheduleDays: Set<Int>): String? {
+    if (scheduleDays.isEmpty() || period == HabitPeriod.DAILY || period.isIntervalMode()) return null
+    return when {
+        period == HabitPeriod.WEEKLY && scheduleDays.size < targetCount -> "weekly schedule is smaller than target"
+        period == HabitPeriod.MONTHLY && scheduleDays.size < targetCount -> "monthly schedule is smaller than target"
+        else -> null
+    }
+}
+
+private fun HabitPeriod.maximumTargetCount(): Int = when (this) {
+    HabitPeriod.DAILY -> 99
+    HabitPeriod.WEEKLY -> 7
+    HabitPeriod.MONTHLY -> 31
+    HabitPeriod.EVERY_N_DAYS,
+    HabitPeriod.AFTER_COMPLETION_N_DAYS,
+    -> 1
+}
+
+private fun HabitPeriod.isIntervalMode(): Boolean =
+    this == HabitPeriod.EVERY_N_DAYS || this == HabitPeriod.AFTER_COMPLETION_N_DAYS

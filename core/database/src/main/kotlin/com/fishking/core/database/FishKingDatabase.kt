@@ -33,7 +33,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         JournalTodoCrossRef::class,
         JournalTagCrossRef::class,
     ],
-    version = 7,
+    version = 10,
     exportSchema = true,
 )
 @TypeConverters(DatabaseConverters::class)
@@ -178,6 +178,36 @@ abstract class FishKingDatabase : RoomDatabase() {
             }
         }
 
+        @JvmField
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE life_goals ADD COLUMN accentColor INTEGER")
+            }
+        }
+
+        @JvmField
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE journal_blocks ADD COLUMN textAlignment TEXT NOT NULL DEFAULT 'LEFT'")
+                database.execSQL("ALTER TABLE journal_blocks ADD COLUMN listStyle TEXT NOT NULL DEFAULT 'NONE'")
+                database.execSQL("ALTER TABLE journal_blocks ADD COLUMN isChecked INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        @JvmField
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // List controls were removed from the journal editor. Keep the
+                // columns for a safe additive migration, but turn any v9 list
+                // paragraphs (including empty checklist anchors) back into
+                // ordinary text without touching their content or rich styles.
+                database.execSQL(
+                    "UPDATE journal_blocks SET listStyle = 'NONE', isChecked = 0 " +
+                        "WHERE listStyle <> 'NONE' OR isChecked <> 0",
+                )
+            }
+        }
+
         fun create(context: Context): FishKingDatabase =
             Room.databaseBuilder(
                 context.applicationContext,
@@ -190,6 +220,9 @@ abstract class FishKingDatabase : RoomDatabase() {
                 MIGRATION_4_5,
                 MIGRATION_5_6,
                 MIGRATION_6_7,
+                MIGRATION_7_8,
+                MIGRATION_8_9,
+                MIGRATION_9_10,
             )
                 .build()
     }

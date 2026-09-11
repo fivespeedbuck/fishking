@@ -158,6 +158,94 @@ class HomeViewModelTest {
         assertEquals(TodoChangeScope.THIS_AND_FUTURE, home.reminderScope)
         assertEquals(0, home.recurrenceUpdateCount)
     }
+
+    @Test
+    fun editingColourPreviewsImmediatelyButOnlyConfirmationPersistsIt() = runTest(dispatcher) {
+        val home = RecordingHomeRepository()
+        val viewModel = HomeViewModel(SavedStateHandle(), home, EmptyHabitRepository, EmptyLifeRepository)
+        val todo = sampleTodo().copy(accentColor = 1L)
+        viewModel.startEditing(todo)
+        advanceUntilIdle()
+        viewModel.setAccentColor(todo.id, 2L)
+        assertEquals(2L, viewModel.editingAccentColor.value)
+        advanceUntilIdle()
+        assertEquals(null, home.lastAccentEdit)
+        viewModel.cancelEditing()
+        viewModel.startEditing(todo)
+        assertEquals(1L, viewModel.editingAccentColor.value)
+        viewModel.setAccentColor(todo.id, 3L)
+        viewModel.setEditingScope(TodoChangeScope.THIS_AND_FUTURE)
+        advanceUntilIdle()
+        viewModel.confirmEditing()
+        advanceUntilIdle()
+        assertEquals(Triple(todo.id, 3L, TodoChangeScope.THIS_AND_FUTURE), home.lastAccentEdit)
+    }
+
+    @Test
+    fun switchingEditorsDiscardsThePreviousTodoDraft() = runTest(dispatcher) {
+        val home = RecordingHomeRepository()
+        val viewModel = HomeViewModel(SavedStateHandle(), home, EmptyHabitRepository, EmptyLifeRepository)
+        val first = sampleTodo()
+        val second = sampleTodo().copy(id = "todo-2", title = "第二张卡")
+
+        viewModel.startEditing(first)
+        viewModel.updateEditingTitle("不应保存的旧草稿")
+        viewModel.setAccentColor(first.id, 42L)
+        viewModel.startEditing(second)
+        advanceUntilIdle()
+
+        assertEquals(second.id, viewModel.editingId.value)
+        assertEquals(second.title, viewModel.editingTitle.value)
+        assertEquals(Long.MIN_VALUE, viewModel.editingAccentColor.value)
+        assertEquals(null, home.lastTitleEdit)
+        assertEquals(null, home.lastAccentEdit)
+    }
+
+    @Test
+    fun operatingAnotherCardKeepsTheCurrentEditorOpen() = runTest(dispatcher) {
+        val home = RecordingHomeRepository()
+        val viewModel = HomeViewModel(SavedStateHandle(), home, EmptyHabitRepository, EmptyLifeRepository)
+        val editing = sampleTodo()
+
+        viewModel.startEditing(editing)
+        viewModel.updateEditingTitle("仍在编辑")
+        viewModel.toggleCompletion("todo-2")
+        advanceUntilIdle()
+
+        assertEquals("todo-2", home.lastCompletionToggle)
+        assertEquals(editing.id, viewModel.editingId.value)
+        assertEquals("仍在编辑", viewModel.editingTitle.value)
+    }
+
+    @Test
+    fun startingAnotherDraftAndReturningToDateScopeClearOldDeadline() = runTest(dispatcher) {
+        val viewModel = HomeViewModel(SavedStateHandle(), RecordingHomeRepository(), EmptyHabitRepository, EmptyLifeRepository)
+        val date = LocalDate.of(2026, 9, 11)
+        viewModel.startDraft(date)
+        viewModel.setDeadline(date.plusDays(5))
+        assertEquals("DEADLINE", viewModel.draftPlanScope.value)
+        viewModel.setPlanScope(com.fishking.core.model.TodoPlanScope.DATE)
+        assertEquals("", viewModel.draftDeadline.value)
+        viewModel.setDeadline(date.plusDays(10))
+        viewModel.cancelDraft()
+        viewModel.startDraft(date.plusDays(1))
+        assertEquals("DATE", viewModel.draftPlanScope.value)
+        assertEquals("", viewModel.draftDeadline.value)
+    }
+
+    @Test
+    fun cancelEditingAndRecurringDateScopeCannotKeepOldDeadline() = runTest(dispatcher) {
+        val viewModel = HomeViewModel(SavedStateHandle(), RecordingHomeRepository(), EmptyHabitRepository, EmptyLifeRepository)
+        viewModel.startEditing(sampleTodo().copy(planScope = com.fishking.core.model.TodoPlanScope.DEADLINE, planDeadline = LocalDate.of(2026, 9, 20)))
+        viewModel.setEditingRecurrence(com.fishking.core.model.RecurrenceFrequency.DAILY)
+        assertEquals("DATE", viewModel.editingPlanScope.value)
+        assertEquals("", viewModel.editingDeadline.value)
+        viewModel.setDeadline(LocalDate.of(2026, 9, 21))
+        viewModel.cancelEditing()
+        assertEquals("DATE", viewModel.editingPlanScope.value)
+        assertEquals("", viewModel.editingDeadline.value)
+        advanceUntilIdle()
+    }
 }
 
 private class RecordingHomeRepository : HomeRepository {
@@ -171,8 +259,10 @@ private class RecordingHomeRepository : HomeRepository {
     var recurrenceUpdateCount: Int = 0
     var reorderedIds: List<String> = emptyList()
     var lastTitleEdit: Pair<String, String>? = null
+    var lastAccentEdit: Triple<String, Long?, TodoChangeScope>? = null
     var currentReminders = emptyList<com.fishking.core.model.TodoReminder>()
     var savedReminders = emptyList<TodoReminderSpec>()
+    var lastCompletionToggle: String? = null
     override suspend fun remindersFor(occurrenceId: String) = currentReminders
 
     override fun observeTodos(date: LocalDate): Flow<List<TodoOccurrence>> = flowOf(emptyList())
@@ -196,7 +286,9 @@ private class RecordingHomeRepository : HomeRepository {
         ensuredDates += date
     }
 
-    override suspend fun toggleCompletion(occurrenceId: String) = Unit
+    override suspend fun toggleCompletion(occurrenceId: String) {
+        lastCompletionToggle = occurrenceId
+    }
     override suspend fun togglePriority(occurrenceId: String) = Unit
     override suspend fun reorderTodos(date: LocalDate, orderedIds: List<String>) {
         reorderedIds = orderedIds
@@ -206,7 +298,9 @@ private class RecordingHomeRepository : HomeRepository {
         titleScope = scope
         lastTitleEdit = occurrenceId to title
     }
-    override suspend fun setAccentColor(occurrenceId: String, accentColor: Long?, scope: TodoChangeScope) = Unit
+    override suspend fun setAccentColor(occurrenceId: String, accentColor: Long?, scope: TodoChangeScope) {
+        lastAccentEdit = Triple(occurrenceId, accentColor, scope)
+    }
     override suspend fun setReminders(occurrenceId: String, reminders: List<TodoReminderSpec>, scope: TodoChangeScope) {
         reminderScope = scope
         savedReminders = reminders
@@ -264,7 +358,7 @@ private object EmptyHabitRepository : HabitRepository {
 private object EmptyLifeRepository : LifeRepository {
     override fun observeGoals(): Flow<List<LifeGoalWithEvents>> = flowOf(emptyList())
     override suspend fun createGoal(title: String, note: String?, type: LifeGoalType): String = "goal"
-    override suspend fun updateGoal(goalId: String, title: String, note: String?, type: LifeGoalType) = Unit
+    override suspend fun updateGoal(goalId: String, title: String, note: String?, type: LifeGoalType, accentColor: Long?) = Unit
     override suspend fun toggleManualResult(goalId: String, occurredOn: LocalDate): String? = null
     override suspend fun deleteManualEvent(eventId: String) = Unit
     override suspend fun setPosition(goalId: String, position: Long) = Unit

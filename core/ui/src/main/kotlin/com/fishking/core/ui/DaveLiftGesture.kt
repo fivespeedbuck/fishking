@@ -24,6 +24,7 @@ internal fun rememberDaveLiftModifier(
     draw: @Composable () -> Unit,
     onPosition: ((Offset) -> Unit)?, onDrop: ((Offset) -> Unit)?,
     group: String = key,
+    previewReorder: Boolean = true,
 ): Modifier {
     val layer = LocalDaveDragController.current
     val haptics = LocalHapticFeedback.current
@@ -34,7 +35,7 @@ internal fun rememberDaveLiftModifier(
     val drop by rememberUpdatedState(onDrop)
     val currentDraw by rememberUpdatedState(draw)
     DisposableEffect(key, enabled) { onDispose { if (enabled && onDrop != null) layer?.unregister(key) } }
-    val targetOffset = layer?.previewOffset(key) ?: Offset.Zero
+    val targetOffset = if (previewReorder) layer?.previewOffset(key) ?: Offset.Zero else Offset.Zero
     val offsetX by androidx.compose.animation.core.animateFloatAsState(targetOffset.x, androidx.compose.animation.core.tween(160), label = "reorder x")
     val offsetY by androidx.compose.animation.core.animateFloatAsState(targetOffset.y, androidx.compose.animation.core.tween(160), label = "reorder y")
     return Modifier.onGloballyPositioned { bounds = it.boundsInRoot(); if (enabled && onDrop != null) layer?.register(key, group, bounds) }
@@ -66,7 +67,7 @@ internal fun rememberDaveLiftModifier(
                     positionChanged = { point -> position?.invoke(point) },
                     finished = { target ->
                         val crossDateHandled = dateDrop?.invoke(key, target) == true
-                        if (!crossDateHandled) {
+                        if (!crossDateHandled && previewReorder) {
                             val reorderTarget = layer?.reorderTarget()
                             if (reorderTarget != null && reorder != null && layer?.groupOf(reorderTarget.first) == group) {
                                 reorder?.invoke(key, reorderTarget.first, reorderTarget.second)

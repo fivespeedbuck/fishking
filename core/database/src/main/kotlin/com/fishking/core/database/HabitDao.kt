@@ -54,6 +54,15 @@ interface HabitDao {
     @Query("SELECT * FROM habit_versions WHERE habitId = :habitId ORDER BY effectiveFromWeek ASC LIMIT 1")
     suspend fun firstVersion(habitId: String): HabitVersionEntity?
 
+    @Query("SELECT * FROM habit_versions WHERE habitId = :habitId AND effectiveFromWeek > :date ORDER BY effectiveFromWeek ASC")
+    suspend fun versionsAfter(habitId: String, date: LocalDate): List<HabitVersionEntity>
+
+    @Query("DELETE FROM habit_versions WHERE habitId = :habitId AND effectiveFromWeek > :date")
+    suspend fun deleteVersionsAfter(habitId: String, date: LocalDate): Int
+
+    @Query("UPDATE habit_versions SET color = :color WHERE habitId = :habitId")
+    suspend fun recolorAllVersions(habitId: String, color: Long)
+
     @Query("SELECT * FROM habit_day_records WHERE habitId = :habitId AND date = :date LIMIT 1")
     suspend fun dayRecord(habitId: String, date: LocalDate): HabitDayRecordEntity?
 

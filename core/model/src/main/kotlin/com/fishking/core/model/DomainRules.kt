@@ -95,7 +95,10 @@ object HabitScheduleRules {
         val periodCount = periodCount(rule, records, date)
         val planned = isPlannedDate(rule, records, date)
         val anchor = if (rule.period == HabitPeriod.AFTER_COMPLETION_N_DAYS) {
-            records.lastOrNull { it.affectsScheduleAnchor }?.date
+            // Dynamic cadence follows the latest real completion, including a completion
+            // entered later as a historical backfill. Otherwise yesterday's forgotten tick
+            // would incorrectly leave today immediately available again.
+            records.lastOrNull()?.date
         } else {
             null
         }

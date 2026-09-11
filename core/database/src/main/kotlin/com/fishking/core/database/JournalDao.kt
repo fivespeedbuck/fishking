@@ -136,11 +136,17 @@ interface JournalDao {
     @Query("DELETE FROM journal_life_goal_cross_ref WHERE journalId = :journalId AND lifeGoalId = :goalId")
     suspend fun unlinkGoal(journalId: String, goalId: String): Int
 
+    @Query("DELETE FROM journal_life_goal_cross_ref WHERE journalId = :journalId")
+    suspend fun unlinkAllGoals(journalId: String): Int
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun linkTodo(link: JournalTodoCrossRef): Long
 
     @Query("DELETE FROM journal_todo_cross_ref WHERE journalId = :journalId AND todoOccurrenceId = :todoId")
     suspend fun unlinkTodo(journalId: String, todoId: String): Int
+
+    @Query("DELETE FROM journal_todo_cross_ref WHERE journalId = :journalId")
+    suspend fun unlinkAllTodos(journalId: String): Int
 
     @Insert
     suspend fun insertMediaAsset(asset: MediaAssetEntity)

@@ -62,6 +62,27 @@ class DomainRulesTest {
     }
 
     @Test
+    fun `fixed three day cadence exposes only calendar slots across weeks`() {
+        val start = LocalDate.of(2026, 9, 11)
+        val rule = rule(HabitPeriod.EVERY_N_DAYS, start, 3)
+        val range = (0L..23L).map(start::plusDays)
+
+        assertEquals(
+            listOf(
+                LocalDate.of(2026, 9, 11),
+                LocalDate.of(2026, 9, 14),
+                LocalDate.of(2026, 9, 17),
+                LocalDate.of(2026, 9, 20),
+                LocalDate.of(2026, 9, 23),
+                LocalDate.of(2026, 9, 26),
+                LocalDate.of(2026, 9, 29),
+                LocalDate.of(2026, 10, 2),
+            ),
+            range.filter { HabitScheduleRules.state(rule, emptyList(), it).isPlannedDate },
+        )
+    }
+
+    @Test
     fun `missing month day does not turn a selected monthly schedule into every day`() {
         val start = LocalDate.of(2026, 1, 31)
         val monthly = rule(HabitPeriod.MONTHLY, start, 1).copy(
@@ -73,13 +94,13 @@ class DomainRulesTest {
     }
 
     @Test
-    fun `dynamic cadence uses latest anchor and ignores ordinary historical backfills`() {
+    fun `dynamic cadence reanchors from a historical backfill`() {
         val start = LocalDate.of(2026, 9, 1)
         val rule = rule(HabitPeriod.AFTER_COMPLETION_N_DAYS, start, 3)
         val backfill = dayRecord(start.plusDays(1), 1).copy(isBackfilled = true, affectsScheduleAnchor = false)
-        val today = dayRecord(start.plusDays(4), 1)
-        assertEquals(start.plusDays(7), HabitScheduleRules.state(rule, listOf(backfill, today), start.plusDays(4)).nextDueDate)
-        assertTrue(HabitScheduleRules.state(rule, listOf(backfill, today), start.plusDays(7)).isDue)
+        val state = HabitScheduleRules.state(rule, listOf(backfill), start.plusDays(2))
+        assertEquals(start.plusDays(4), state.nextDueDate)
+        assertFalse(state.isDue)
     }
 
     private fun rule(period: HabitPeriod, start: LocalDate, interval: Int) = HabitVersion(

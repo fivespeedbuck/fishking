@@ -25,11 +25,14 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.SkipNext
+import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -86,7 +89,6 @@ fun DaveHabitWeekPanel(
     val skin = LocalHabitWeekSkin.current
     val unified = skin == HabitWeekSkin.UNIFIED_CARD
     val panelShape = RoundedCornerShape(13.dp)
-    val todayOffset = if (isCurrentWeek) today.toEpochDay() - snapshot.weekStart.toEpochDay() else -1L
     androidx.compose.runtime.CompositionLocalProvider(LocalDaveReorderCommit provides onReorderHabit) {
     Box(
         modifier = modifier
@@ -95,21 +97,6 @@ fun DaveHabitWeekPanel(
             .background(
                 if (unified) DavePalette.Card
                 else if (isCurrentWeek) DavePalette.CurrentWeek else DavePalette.OtherWeek,
-            )
-            .then(
-                if (unified && todayOffset in 0L..6L) Modifier.drawBehind {
-                    val horizontalInset = 10.dp.toPx()
-                    val titleWidth = 92.dp.toPx()
-                    val dayWidth = (size.width - horizontalInset * 2f - titleWidth) / 7f
-                    drawRect(
-                        color = Color(0xFFEAF7F0),
-                        topLeft = androidx.compose.ui.geometry.Offset(
-                            horizontalInset + titleWidth + dayWidth * todayOffset.toFloat(),
-                            0f,
-                        ),
-                        size = androidx.compose.ui.geometry.Size(dayWidth, size.height),
-                    )
-                } else Modifier,
             )
             .border(1.dp, DavePalette.WeekBorder, panelShape),
     ) {
@@ -177,6 +164,7 @@ private fun RecurringTodoWeekRow(
             .fillMaxWidth()
             .height(66.dp)
             .background(if (unified) Color.Transparent else DavePalette.Card)
+            .habitTodayStripe(weekStart, today, unified)
             .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -227,7 +215,9 @@ private fun RecurringTodoWeekRow(
 @Composable
 private fun WeekDayHeader(weekStart: LocalDate, today: LocalDate, isCurrentWeek: Boolean, unified: Boolean) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+        modifier = Modifier.fillMaxWidth()
+            .habitTodayStripe(weekStart, today, unified)
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.width(92.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -282,14 +272,58 @@ private fun HabitWeekRow(
     unified: Boolean = false,
     liftedPreview: Boolean = false,
 ) {
-    val actionWidthDp = if (allowActions) 162.dp else 54.dp
+    val actionWidthDp = if (allowActions) 132.dp else 48.dp
     val density = androidx.compose.ui.platform.LocalDensity.current
     val actionWidthPx = with(density) { actionWidthDp.toPx() }
     val scope = rememberCoroutineScope()
-    var offsetX by remember(habit.id, habit.weekStart) { mutableFloatStateOf(0f) }
+    val offsetX = remember(habit.id, habit.weekStart) { mutableFloatStateOf(0f) }
+    var settleJob by remember(habit.id, habit.weekStart) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var actionsVisible by remember(habit.id, habit.weekStart) { mutableStateOf(false) }
+    val displayDate = remember(habit.weekStart, today) {
+        maxOf(habit.weekStart, minOf(today, habit.weekStart.plusDays(6)))
+    }
+    val displayRule = remember(habit, displayDate) { habit.ruleOn(displayDate) }
+    val dayPresentations = remember(habit, today) {
+        (0..6).map { dayOffset ->
+            val date = habit.weekStart.plusDays(dayOffset.toLong())
+            val record = habit.records.firstOrNull { it.date == date }
+            val state = habit.dayState(date)
+            val cutoff = minOf(today, when (state.rule.period) {
+                HabitPeriod.MONTHLY -> java.time.YearMonth.from(date).atEndOfMonth()
+                else -> habit.weekStart.plusDays(6)
+            })
+            val periodTargetReached = when (state.rule.period) {
+                HabitPeriod.WEEKLY -> cutoff >= habit.weekStart && habit.records.count {
+                    it.date in habit.weekStart..cutoff && it.count > 0
+                } >= state.rule.targetCount
+                HabitPeriod.MONTHLY -> cutoff >= java.time.YearMonth.from(date).atDay(1) && habit.records.count {
+                    java.time.YearMonth.from(it.date) == java.time.YearMonth.from(date) &&
+                        !it.date.isAfter(cutoff) && it.count > 0
+                } >= state.rule.targetCount
+                else -> false
+            }
+            HabitDayPresentation(
+                date = date,
+                period = state.rule.period,
+                count = state.actualCount,
+                targetCount = state.rule.targetCount,
+                color = state.rule.color,
+                isBackfilled = record?.isBackfilled == true,
+                enabled = !date.isAfter(today),
+                // The trajectory is a calendar, not the home-page due queue.
+                // A missed fixed-cadence slot can remain due on Home, but it
+                // must not turn every later non-slot day into a planned circle.
+                planned = state.isPlannedDate && !(periodTargetReached && state.actualCount == 0),
+                title = state.rule.title,
+            )
+        }
+    }
     fun settle(target: Float, after: (() -> Unit)? = null) {
-        scope.launch {
-            animate(offsetX, target, animationSpec = tween(180)) { value, _ -> offsetX = value }
+        settleJob?.cancel()
+        if (target >= 0f) actionsVisible = false
+        settleJob = scope.launch {
+            animate(offsetX.floatValue, target, animationSpec = tween(180)) { value, _ -> offsetX.floatValue = value }
+            actionsVisible = target < 0f
             after?.invoke()
         }
     }
@@ -315,49 +349,60 @@ private fun HabitWeekRow(
         onDrop = {},
         group = "habit-order",
     )
-    Box(modifier = Modifier.fillMaxWidth().then(lift).clip(RoundedCornerShape(7.dp))) {
-        if ((allowActions || onDeleteHabit != null) && offsetX < -1f) {
-            Row(
-                modifier = Modifier.align(Alignment.CenterEnd).width(actionWidthDp).height(66.dp),
-            ) {
-                if (allowActions) HabitSwipeAction(
-                    color = DavePalette.HeaderGreen,
-                    description = "编辑打卡项目",
-                    icon = Icons.Outlined.Edit,
-                    onClick = { settle(0f) { onEdit(habit) } },
-                )
-                if (allowActions) HabitSwipeAction(
-                    color = DavePalette.Meta,
-                    description = if (habit.isSkipped) "恢复本周要求" else "跳过本周要求",
-                    icon = if (habit.isSkipped) Icons.Outlined.Replay else Icons.Outlined.SkipNext,
-                    onClick = { settle(0f) { onToggleSkip(habit.id, habit.weekStart) } },
-                )
-                HabitSwipeAction(
-                    color = DavePalette.Urgent,
-                    description = if (onDeleteHabit != null) "删除此习惯" else "从本周起结束打卡项目",
-                    icon = Icons.Outlined.DeleteOutline,
-                    onClick = { settle(0f) { if (onDeleteHabit != null) onDeleteHabit(habit) else onEndFromWeek(habit.id, habit.weekStart) } },
-                )
-            }
+    Box(
+        modifier = Modifier.fillMaxWidth().then(lift).clip(RoundedCornerShape(7.dp))
+            .background(if (!unified || liftedPreview || actionsVisible || offsetX.floatValue != 0f) DavePalette.Card else Color.Transparent)
+            .habitTodayStripe(habit.weekStart, today, unified && !liftedPreview && !actionsVisible && offsetX.floatValue == 0f),
+    ) {
+        if ((allowActions || onDeleteHabit != null) && actionsVisible) {
+            DaveCardActionStrip(
+                actions = buildList {
+                    if (allowActions) {
+                        add(DaveCardAction(
+                            icon = Icons.Outlined.Edit,
+                            description = "编辑打卡项目",
+                            color = DavePalette.HeaderGreen,
+                            onClick = { settle(0f) { onEdit(habit) } },
+                        ))
+                        add(DaveCardAction(
+                            icon = if (habit.isSkipped) Icons.Outlined.Replay else Icons.Outlined.SkipNext,
+                            description = if (habit.isSkipped) "恢复本周要求" else "跳过本周要求",
+                            color = DavePalette.Plan,
+                            onClick = { settle(0f) { onToggleSkip(habit.id, habit.weekStart) } },
+                        ))
+                    }
+                    add(DaveCardAction(
+                        icon = if (allowActions) Icons.Outlined.StopCircle else Icons.Outlined.DeleteOutline,
+                        description = if (allowActions) "从本周起结束打卡项目" else "删除此习惯",
+                        color = DavePalette.Urgent,
+                        onClick = { settle(0f) { if (allowActions) onEndFromWeek(habit.id, habit.weekStart) else onDeleteHabit?.invoke(habit) } },
+                    ))
+                },
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(actionWidthDp)
+                    .height(66.dp),
+            )
         }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(66.dp)
-                .offset { IntOffset(offsetX.roundToInt(), 0) }
-                // Unified rows stay transparent at rest so the one-piece today stripe
-                // remains continuous. While swiping/lifting they become an opaque card,
-                // preventing unrevealed action buttons from showing through the circles.
-                .background(if (!unified || liftedPreview || offsetX < -1f) DavePalette.Card else Color.Transparent)
+                .offset { IntOffset(offsetX.floatValue.roundToInt(), 0) }
+                // The row owns its today stripe; editors between rows never inherit it.
+                // The revealed action icons share this existing card's background.
+                .background(if (!unified || liftedPreview || actionsVisible || offsetX.floatValue != 0f) DavePalette.Card else Color.Transparent)
                 .then(
                     if (allowActions || onDeleteHabit != null) Modifier.pointerInput(habit.id, habit.weekStart) {
                         detectHorizontalDragGestures(
                             onHorizontalDrag = { change, amount ->
                                 change.consume()
-                                offsetX = (offsetX + amount).coerceIn(-actionWidthPx, 0f)
+                                settleJob?.cancel()
+                                offsetX.floatValue = (offsetX.floatValue + amount).coerceIn(-actionWidthPx, 0f)
+                                actionsVisible = offsetX.floatValue < -1f
                             },
                             onDragEnd = {
-                                settle(if (offsetX <= -actionWidthPx * .42f) -actionWidthPx else 0f)
+                                settle(if (offsetX.floatValue <= -actionWidthPx * .42f) -actionWidthPx else 0f)
                             },
                             onDragCancel = { settle(0f) },
                         )
@@ -366,8 +411,6 @@ private fun HabitWeekRow(
                 .padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val displayDate = minOf(today, habit.weekStart.plusDays(6))
-            val displayRule = habit.ruleOn(displayDate)
             val visibleTitle = remember(displayRule.title) { splitDaveTaskText(displayRule.title).title }
             Column(modifier = Modifier.width(92.dp).padding(end = 3.dp)) {
                 Text(
@@ -391,38 +434,19 @@ private fun HabitWeekRow(
                     color = Color(displayRule.color), fontSize = 12.sp, fontWeight = FontWeight.Bold,
                 )
             }
-            repeat(7) { offset ->
-                val date = habit.weekStart.plusDays(offset.toLong())
-                val record = habit.records.firstOrNull { it.date == date }
-                val state = habit.dayState(date)
-                val cutoff = minOf(today, when (state.rule.period) {
-                    HabitPeriod.MONTHLY -> java.time.YearMonth.from(date).atEndOfMonth()
-                    else -> habit.weekStart.plusDays(6)
-                })
-                val periodTargetReached = when (state.rule.period) {
-                    HabitPeriod.WEEKLY -> cutoff >= habit.weekStart && habit.records.count {
-                        it.date in habit.weekStart..cutoff && it.count > 0
-                    } >= state.rule.targetCount
-                    HabitPeriod.MONTHLY -> cutoff >= java.time.YearMonth.from(date).atDay(1) && habit.records.count {
-                        java.time.YearMonth.from(it.date) == java.time.YearMonth.from(date) &&
-                            !it.date.isAfter(cutoff) && it.count > 0
-                    } >= state.rule.targetCount
-                    else -> false
-                }
-                val planned = (state.isPlannedDate || state.isDue) && !(periodTargetReached && state.actualCount == 0)
-                val enabled = !date.isAfter(today)
+            dayPresentations.forEach { day ->
                 HabitDayCircle(
-                    period = state.rule.period,
-                    count = state.actualCount,
-                    targetCount = state.rule.targetCount,
-                    color = Color(state.rule.color),
-                    isBackfilled = record?.isBackfilled == true,
-                    enabled = enabled,
-                    planned = planned,
-                    isToday = date == today,
+                    period = day.period,
+                    count = day.count,
+                    targetCount = day.targetCount,
+                    color = Color(day.color),
+                    isBackfilled = day.isBackfilled,
+                    enabled = day.enabled,
+                    planned = day.planned,
+                    isToday = day.date == today,
                     individualTodayHighlight = !unified,
-                    description = "${state.rule.title} ${date.monthValue}月${date.dayOfMonth}日",
-                    onClick = { onToggle(habit.id, date) },
+                    description = "${day.title} ${day.date.monthValue}月${day.date.dayOfMonth}日",
+                    onClick = { onToggle(habit.id, day.date) },
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -432,12 +456,12 @@ private fun HabitWeekRow(
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset { IntOffset(offsetX.roundToInt(), 0) }
+                    .offset { IntOffset(offsetX.floatValue.roundToInt(), 0) }
                     .height(66.dp)
                     .align(Alignment.Center),
             ) {
                 drawLine(
-                    color = Color(habit.color).copy(alpha = if (historical) .70f else 1f),
+                    color = Color(displayRule.color).copy(alpha = if (historical) .70f else 1f),
                     start = androidx.compose.ui.geometry.Offset(8.dp.toPx(), size.height / 2f),
                     end = androidx.compose.ui.geometry.Offset(size.width - 8.dp.toPx(), size.height / 2f),
                     strokeWidth = 2.dp.toPx(),
@@ -449,25 +473,36 @@ private fun HabitWeekRow(
     }
 }
 
-@Composable
-private fun HabitSwipeAction(
-    color: Color,
-    description: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: () -> Unit,
-) {
-    Box(
-            modifier = Modifier
-                .width(54.dp)
-                .height(64.dp)
-            .background(color)
-            .clickable(onClick = onClick)
-            .semantics { contentDescription = description },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(23.dp))
+/** Applied only to calendar/trajectory rows, never the full panel or an editor. */
+private fun Modifier.habitTodayStripe(weekStart: LocalDate, today: LocalDate, enabled: Boolean): Modifier {
+    val offset = today.toEpochDay() - weekStart.toEpochDay()
+    if (!enabled || offset !in 0L..6L) return this
+    return drawBehind {
+        val horizontalInset = 10.dp.toPx()
+        val titleWidth = 92.dp.toPx()
+        val dayWidth = (size.width - horizontalInset * 2f - titleWidth) / 7f
+        drawRect(
+            color = Color(0xFFEAF7F0),
+            topLeft = androidx.compose.ui.geometry.Offset(
+                horizontalInset + titleWidth + dayWidth * offset.toFloat(),
+                0f,
+            ),
+            size = androidx.compose.ui.geometry.Size(dayWidth, size.height),
+        )
     }
 }
+
+private data class HabitDayPresentation(
+    val date: LocalDate,
+    val period: HabitPeriod,
+    val count: Int,
+    val targetCount: Int,
+    val color: Long,
+    val isBackfilled: Boolean,
+    val enabled: Boolean,
+    val planned: Boolean,
+    val title: String,
+)
 
 @Composable
 private fun HabitDayCircle(

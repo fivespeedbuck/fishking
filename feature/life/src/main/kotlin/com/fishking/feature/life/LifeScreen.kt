@@ -25,7 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.fishking.core.ui.DaveFloatingAddButton
+import com.fishking.core.ui.DaveScreenFloatingAddAction
+import com.fishking.core.ui.FishKingSection
 import com.fishking.core.ui.DaveInlineDraftCard
 import com.fishking.core.ui.DaveLifeGoalCard
 import com.fishking.core.ui.DaveLifeGoalEditor
@@ -53,6 +54,7 @@ fun LifeScreen(
     val editingNote by viewModel.editingNote.collectAsStateWithLifecycle()
     val editingTags by viewModel.editingTags.collectAsStateWithLifecycle()
     val editingType by viewModel.editingType.collectAsStateWithLifecycle()
+    val editingAccentColor by viewModel.editingAccentColor.collectAsStateWithLifecycle()
     val timeline = items.flatMap { item ->
         item.value.events.map { event ->
             DaveLifeTimelineEntry(
@@ -105,6 +107,8 @@ fun LifeScreen(
                         note = editingNote,
                         tags = editingTags,
                         type = editingType,
+                        accentColor = editingAccentColor,
+                        onAccentColorChange = viewModel::setEditingAccentColor,
                         events = item.value.events,
                         onTitleChange = viewModel::updateEditingTitle,
                         onNoteChange = viewModel::updateEditingNote,
@@ -150,7 +154,8 @@ fun LifeScreen(
             item { Spacer(Modifier.height(112.dp)) }
         }
 
-        DaveFloatingAddButton(
+        DaveScreenFloatingAddAction(
+            section = FishKingSection.LIFE,
             enabled = !draftVisible && editingId == null,
             onClick = viewModel::startDraft,
             modifier = Modifier.align(Alignment.BottomEnd).padding(22.dp),

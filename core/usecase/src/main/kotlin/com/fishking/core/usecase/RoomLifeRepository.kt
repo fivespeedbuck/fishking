@@ -61,6 +61,7 @@ class RoomLifeRepository(
         title: String,
         note: String?,
         type: LifeGoalType,
+        accentColor: Long?,
     ) {
         val cleanTitle = title.trim()
         require(cleanTitle.isNotEmpty()) { "Life goal title cannot be blank" }
@@ -72,6 +73,7 @@ class RoomLifeRepository(
                     title = cleanTitle,
                     note = note.cleanOptionalText(),
                     type = type.name,
+                    accentColor = accentColor,
                     updatedAt = clock.instant(),
                 ),
             )
@@ -128,11 +130,13 @@ class RoomLifeRepository(
         return database.withTransaction {
             val goal = goalDao.findGoal(goalId) ?: return@withTransaction null
             if (goal.deletedAt != null) return@withTransaction null
-            homeRepository.createTodo(
+            val todoId = homeRepository.createTodo(
                 title = goal.title,
                 date = date,
                 linkedGoalIds = listOf(goalId),
             )
+            if (goal.accentColor != null) homeRepository.setAccentColor(todoId, goal.accentColor)
+            todoId
         }
     }
 

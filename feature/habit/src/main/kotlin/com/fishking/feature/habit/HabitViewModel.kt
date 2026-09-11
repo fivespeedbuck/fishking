@@ -47,7 +47,6 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     val editingScheduleDays = MutableStateFlow<Set<Int>>(emptySet())
     val editingColor = MutableStateFlow(DEFAULT_COLOR)
     val pendingEarlyCheckIn = MutableStateFlow<PendingEarlyCheckIn?>(null)
-    val pendingBackfillAnchor = MutableStateFlow<PendingBackfillAnchor?>(null)
 
     fun setCurrentDate(date: LocalDate) { currentDate.value = date }
 
@@ -144,10 +143,13 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         val title = editingTitle.value.trim()
         if (title.isEmpty()) return
         if (habitScheduleError(editingPeriod.value, editingTarget.value, editingScheduleDays.value) != null) return
+        val effectiveDate = if (editingPeriod.value.isIntervalMode()) {
+            minOf(currentDate.value, editingScheduleStartDate.value)
+        } else currentDate.value
         viewModelScope.launch {
             repository.updateHabitWithSchedule(
                 habitId = habitId,
-                effectiveFromDate = currentDate.value,
+                effectiveFromDate = effectiveDate,
                 title = title,
                 color = editingColor.value,
                 period = editingPeriod.value,
@@ -155,6 +157,7 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
                 scheduleDays = if (editingPeriod.value.isIntervalMode()) emptySet() else editingScheduleDays.value,
                 intervalDays = editingIntervalDays.value,
                 scheduleStartDate = editingScheduleStartDate.value,
+                replaceFutureSchedule = true,
             )
             cancelEditing()
         }
@@ -168,7 +171,7 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
             if (isEarlyDynamic) {
                 pendingEarlyCheckIn.value = PendingEarlyCheckIn(habitId, date, preview)
             } else {
-                toggleAndOfferBackfillAnchor(habitId, date, preview)
+                toggleAndOfferBackfillAnchor(habitId, date)
             }
         }
     }
@@ -178,26 +181,11 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     fun confirmEarlyCheckIn() {
         val pending = pendingEarlyCheckIn.value ?: return
         pendingEarlyCheckIn.value = null
-        viewModelScope.launch { toggleAndOfferBackfillAnchor(pending.habitId, pending.date, pending.preview) }
+        viewModelScope.launch { toggleAndOfferBackfillAnchor(pending.habitId, pending.date) }
     }
 
-    fun dismissBackfillAnchor() { pendingBackfillAnchor.value = null }
-
-    fun confirmBackfillAnchor() {
-        val pending = pendingBackfillAnchor.value ?: return
-        pendingBackfillAnchor.value = null
-        viewModelScope.launch {
-            repository.setCheckInAffectsScheduleAnchor(pending.habitId, pending.date, true)
-        }
-    }
-
-    private suspend fun toggleAndOfferBackfillAnchor(habitId: String, date: LocalDate, preview: HabitDayState?) {
-        val newCount = repository.toggleCheckIn(habitId, date)
-        if (newCount != null && newCount > 0 && date.isBefore(currentDate.value) &&
-            preview?.rule?.period == HabitPeriod.AFTER_COMPLETION_N_DAYS
-        ) {
-            pendingBackfillAnchor.value = PendingBackfillAnchor(habitId, date)
-        }
+    private suspend fun toggleAndOfferBackfillAnchor(habitId: String, date: LocalDate) {
+        repository.toggleCheckIn(habitId, date)
     }
 
     fun toggleSkip(habitId: String, weekStart: LocalDate) {
@@ -260,5 +248,3 @@ data class PendingEarlyCheckIn(
     val date: LocalDate,
     val preview: HabitDayState,
 )
-
-data class PendingBackfillAnchor(val habitId: String, val date: LocalDate)

@@ -16,5 +16,18 @@ enum class HabitWeekSkin(val preferenceValue: String) {
     }
 }
 
+enum class AppBackgroundSkin(val preferenceValue: String) {
+    CLASSIC_BLUE("background_classic_blue"),
+    WARM_CREAM("background_warm_cream");
+
+    companion object {
+        fun fromPreference(value: String?): AppBackgroundSkin = when (value) {
+            WARM_CREAM.preferenceValue -> WARM_CREAM
+            else -> CLASSIC_BLUE
+        }
+    }
+}
+
 val LocalHabitWeekSkin = staticCompositionLocalOf { HabitWeekSkin.UNIFIED_CARD }
+val LocalAppBackgroundSkin = staticCompositionLocalOf { AppBackgroundSkin.CLASSIC_BLUE }
 val LocalPresetTags = staticCompositionLocalOf<List<String>> { emptyList() }

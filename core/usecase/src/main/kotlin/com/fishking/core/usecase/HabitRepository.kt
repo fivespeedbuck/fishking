@@ -61,6 +61,7 @@ interface HabitRepository {
         scheduleDays: Set<Int>,
         intervalDays: Int,
         scheduleStartDate: LocalDate,
+        replaceFutureSchedule: Boolean = false,
     ) = updateHabit(habitId, effectiveFromDate, title, color, period, targetCount, scheduleDays)
 
     /** Returns the new count, 0 when the persisted day record was removed, or null when inactive. */
@@ -69,7 +70,7 @@ interface HabitRepository {
     /** Lets UI ask for explicit confirmation before recording a dynamic cadence early. */
     suspend fun previewCheckIn(habitId: String, date: LocalDate): HabitDayState? = null
 
-    /** Historical backfills are real facts but opt into dynamic re-anchoring only explicitly. */
+    /** Legacy compatibility hook; current dynamic cadence automatically follows real backfills. */
     suspend fun setCheckInAffectsScheduleAnchor(habitId: String, date: LocalDate, affects: Boolean) = Unit
 
     /** Returns the new skipped state, or null when the habit is inactive for that week. */

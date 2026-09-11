@@ -1,6 +1,7 @@
 package com.fishking.feature.home
 
 import com.fishking.core.model.HabitWeekItem
+import com.fishking.core.model.HabitPeriod
 import com.fishking.core.model.TodoOccurrence
 import com.fishking.core.model.TodoPriority
 import java.time.LocalDate
@@ -105,3 +106,47 @@ internal fun buildHomeDisplaySections(
         completedHabits = habitItems.filter(HomeDisplayItem.Habit::isComplete),
     )
 }
+
+/** Whether the next habit tap changes its single-day completion section. */
+internal fun HomeDisplayItem.Habit.willCrossCompletionOnTap(): Boolean {
+    val nextComplete = when (value.period) {
+        HabitPeriod.DAILY -> if (count >= value.targetCount) false else count + 1 >= value.targetCount
+        else -> !checkedOnDate
+    }
+    return nextComplete != isComplete
+}
+
+/** The source card is gone from the list while its independent flight runs. */
+internal fun HomeDisplaySections.removeOutgoingItem(
+    transition: HomeCompletionTransition,
+): HomeDisplaySections = copy(
+    openUrgent = openUrgent.filterNot { it.value.id == transition.before.id },
+    openNormal = openNormal.filterNot { it.value.id == transition.before.id },
+    completedUrgent = completedUrgent.filterNot { it.value.id == transition.before.id },
+    completedNormal = completedNormal.filterNot { it.value.id == transition.before.id },
+)
+
+/** Reveal the same card at the head of its destination section. */
+internal fun HomeDisplaySections.revealCompletionTarget(
+    transition: HomeCompletionTransition,
+): HomeDisplaySections {
+    val id = transition.before.id
+    val target = sequenceOf(completedUrgent, completedNormal, openUrgent, openNormal)
+        .flatten()
+        .firstOrNull { it.value.id == id }
+        ?: return this
+    val without = removeOutgoingItem(transition)
+    val targetTodo = HomeDisplayItem.Todo(target.value)
+    return if (transition.targetCompleted) {
+        if (target.value.priority == TodoPriority.URGENT) without.copy(completedUrgent = listOf(targetTodo) + without.completedUrgent)
+        else without.copy(completedNormal = listOf(targetTodo) + without.completedNormal)
+    } else {
+        if (target.value.priority == TodoPriority.URGENT) without.copy(openUrgent = listOf(targetTodo) + without.openUrgent)
+        else without.copy(openNormal = listOf(targetTodo) + without.openNormal)
+    }
+}
+
+internal data class HomeCompletionTransition(
+    val before: TodoOccurrence,
+    val targetCompleted: Boolean,
+)

@@ -94,7 +94,7 @@ class DaveInteractionTest {
         var positions = 0
         var completed = 0
         content { DaveDragLayer {
-            DaveSwipeTaskCard(todo(), { completed++ }, {}, {}, {},
+            DaveSwipeTaskCard(todo(), { completed++ }, {}, {},
                 onDragPosition = { positions++ }, onDragFinished = { drops++ }, modifier = Modifier.testTag("lift-card"))
         } }
         compose.onNodeWithTag("lift-card").performTouchInput { down(center) }
@@ -115,13 +115,16 @@ class DaveInteractionTest {
         compose.runOnIdle { assertEquals(1, drops); assertEquals(0, completed) }
     }
 
-    @Test fun deleteActionMatchesExpandedTextHeight() {
+    @Test fun deleteActionStaysCompactInsideExpandedTextRow() {
         content { DaveJournalLine(androidx.compose.ui.text.input.TextFieldValue("较高的正文"), null,
             com.fishking.core.model.JournalTextSize.BODY, emptyList(), false, 0L, {}, {}, {}, Modifier.testTag("tall-line"), minHeight = 180.dp) }
         compose.onNodeWithTag("tall-line").performTouchInput { swipeLeft() }
         val lineBounds = compose.onNodeWithTag("tall-line").getUnclippedBoundsInRoot()
         val deleteBounds = compose.onNodeWithContentDescription("删除这一项").getUnclippedBoundsInRoot()
-        assertEquals(lineBounds.bottom - lineBounds.top, deleteBounds.bottom - deleteBounds.top)
+        val lineHeight = lineBounds.bottom - lineBounds.top
+        val deleteHeight = deleteBounds.bottom - deleteBounds.top
+        assertTrue(deleteHeight < lineHeight)
+        assertEquals(40.dp, deleteHeight)
     }
 
     @Test fun liftedTaskUsesEdgeDropHandlerWithoutCompletingOrFallingBack() {
@@ -134,7 +137,7 @@ class DaveInteractionTest {
             DaveDateDropArea(date, { _, _ -> }, onDrop = { id, _ -> movedId = id; true }) {
                 Column {
                     androidx.compose.foundation.layout.Spacer(Modifier.size(120.dp))
-                    DaveSwipeTaskCard(todo(), { completed++ }, {}, {}, {},
+                    DaveSwipeTaskCard(todo(), { completed++ }, {}, {},
                         onDragPosition = { lastPosition = it }, onDragFinished = { fallback = it }, modifier = Modifier.testTag("date-drop-card"))
                 }
             }
@@ -169,7 +172,7 @@ class DaveInteractionTest {
         content { androidx.compose.runtime.CompositionLocalProvider(LocalTodoTimeEditor provides { edits++ }) {
             DaveSwipeTaskCard(todo().copy(displayReminders = listOf(
                 TodoReminder("reminder-1", "test", 0, LocalTime.of(9, 30), 0L, true, Instant.EPOCH),
-            )), { completed++ }, {}, {}, {})
+            )), { completed++ }, {}, {})
         } }
         compose.onNodeWithContentDescription("设置待办提醒时间").performClick()
         compose.runOnIdle { assertEquals(1, edits); assertEquals(0, completed) }
@@ -216,27 +219,6 @@ class DaveInteractionTest {
         compose.runOnIdle { assertTrue(!changed) }
         compose.onNodeWithTag("line").performTouchInput { swipeRight() }
         compose.onNodeWithContentDescription("删除这一项").assertDoesNotExist()
-    }
-
-    @Test fun journalToolbarShowsCompactActionsWithoutExpansion() {
-        var links = 0
-        var tags = 0
-        content {
-            DaveJournalActionBar({}, {}, {}, { links++ }, { tags++ }, importingMedia = false)
-        }
-        compose.onNodeWithContentDescription("图片/视频").assertIsDisplayed()
-        compose.onNodeWithContentDescription("录音").assertIsDisplayed()
-        compose.onNodeWithContentDescription("地点").assertIsDisplayed()
-        compose.onNodeWithContentDescription("关联").assertIsDisplayed().performClick()
-        compose.onNodeWithContentDescription("编辑日记TAG").assertIsDisplayed().performClick()
-        compose.onNodeWithText("图片/视频").assertDoesNotExist()
-        compose.onNodeWithText("录音").assertDoesNotExist()
-        compose.onNodeWithText("地点").assertDoesNotExist()
-        compose.onNodeWithText("关联").assertDoesNotExist()
-        compose.runOnIdle {
-            assertEquals(1, links)
-            assertEquals(1, tags)
-        }
     }
 
     @Test fun ongoingLifeGoalUsesLeadingCircleAndCompactTitleHistory() {
@@ -385,6 +367,33 @@ class DaveInteractionTest {
         }
         compose.onNodeWithText("今").assertIsDisplayed()
         compose.onAllNodesWithContentDescription("空集", substring = true).assertCountEquals(6)
+    }
+
+    @Test fun fixedCadenceTrajectoryMarksOnlyItsCalendarDates() {
+        val start = LocalDate.of(2026, 9, 11)
+        val week = LocalDate.of(2026, 9, 14)
+        content {
+            DaveHabitWeekPanel(
+                snapshot = HabitWeekSnapshot(
+                    week,
+                    listOf(
+                        habitItem("每三天", week, HabitPeriod.EVERY_N_DAYS).copy(
+                            startDate = start,
+                            intervalDays = 3,
+                            scheduleStartDate = start,
+                        ),
+                    ),
+                ),
+                today = week.plusDays(6),
+                onToggle = { _, _ -> },
+                onEdit = {},
+                onToggleSkip = { _, _ -> },
+                onEndFromWeek = { _, _ -> },
+            )
+        }
+
+        // Sep 14, 17 and 20 are planned. The other four days are empty-set marks.
+        compose.onAllNodesWithContentDescription("空集", substring = true).assertCountEquals(4)
     }
 
     @Test fun completedWeeklyAndMonthlyTargetsReplaceRemainingEmptyCirclesWithEmptySetMarks() {
@@ -542,6 +551,9 @@ class DaveInteractionTest {
         compose.waitForIdle()
         val habitEdit = compose.onNodeWithContentDescription("编辑打卡项目")
         habitEdit.assertIsDisplayed()
+        compose.onNodeWithContentDescription("跳过本周要求").assertIsDisplayed()
+        compose.onNodeWithContentDescription("从本周起结束打卡项目").assertIsDisplayed()
+        compose.onNodeWithContentDescription("收起操作").assertDoesNotExist()
         val habitEditBounds = habitEdit.getUnclippedBoundsInRoot()
         assertTrue("habit edit action should remain inside the panel", habitEditBounds.left >= habitPanelBounds.left)
         assertTrue("habit edit action should be visible at the panel edge", habitEditBounds.right <= habitPanelBounds.right + 1.dp)
@@ -556,6 +568,7 @@ class DaveInteractionTest {
         lifeAdd.assertIsDisplayed()
         compose.onNodeWithContentDescription("编辑人生目标").assertIsDisplayed()
         compose.onNodeWithContentDescription("删除人生目标").assertIsDisplayed()
+        compose.onNodeWithContentDescription("收起操作").assertDoesNotExist()
         val lifeAddBounds = lifeAdd.getUnclippedBoundsInRoot()
         assertTrue("life action should move into the card's trailing edge", lifeAddBounds.left >= lifeCardBounds.left)
         assertTrue("life action should not extend beyond the card", lifeAddBounds.right <= lifeCardBounds.right + 1.dp)

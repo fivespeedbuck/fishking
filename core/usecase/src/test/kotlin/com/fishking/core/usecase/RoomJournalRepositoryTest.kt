@@ -8,6 +8,8 @@ import com.fishking.core.model.JournalBlockDraft
 import com.fishking.core.model.JournalBlockType
 import com.fishking.core.model.JournalTextSize
 import com.fishking.core.model.JournalTextStyleSpan
+import com.fishking.core.model.JournalTextAlignment
+import com.fishking.core.model.JournalListStyle
 import com.fishking.core.model.LifeGoalType
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -62,6 +64,115 @@ class RoomJournalRepositoryTest {
         val month = java.time.YearMonth.from(date)
         assertEquals(listOf("current"), repository.observeTimelineRange(month.atDay(1), month.atEndOfMonth()).first().map { it.id })
         assertEquals(2, repository.observeTimelineRange(month.minusMonths(1).atDay(1), month.atEndOfMonth()).first().size)
+    }
+
+    @Test
+    fun malformedOptionalEntryTimeDoesNotMakeTimelineOrDocumentUnreadable() = runTest {
+        val scoped = repository.forEntry("legacy-time", java.time.LocalTime.of(9, 10))
+        scoped.saveBlocks(date, listOf(JournalBlockDraft(type = JournalBlockType.TEXT_LINE, text = "原正文")))
+        val original = database.journalDao().findById("legacy-time")!!
+        for (invalidTime in listOf("", "not-a-time", "25:90", "09:10:00+08:00")) {
+            database.journalDao().updateJournal(original.copy(entryTime = invalidTime))
+            val timeline = repository.observeTimelineRange(date, date).first().single()
+            assertEquals("legacy-time", timeline.id)
+            assertEquals("原正文", timeline.excerpt)
+            assertNull(timeline.time)
+            val document = scoped.observeDocument(date).first()!!
+            assertEquals("原正文", document.blocks.single().block.text)
+            assertNull(document.entry.entryTime)
+            assertEquals(invalidTime, database.journalDao().findById("legacy-time")!!.entryTime)
+        }
+        database.journalDao().updateJournal(original.copy(entryTime = "09:10:25.123"))
+        assertEquals(java.time.LocalTime.of(9, 10, 25, 123_000_000), repository.observeTimeline().first().single().time)
+    }
+
+    @Test
+    fun metadataComponentsRoundTripInBodyWhileLocationAndTagsStayCanonical() = runTest {
+        repository.setLocation(date, "宁波", 29.8, 121.5)
+        repository.setTags(date, listOf("生活", "旅行"))
+        val types = listOf(JournalBlockType.TEXT_LINE, JournalBlockType.LOCATION, JournalBlockType.TEXT_LINE,
+            JournalBlockType.LINKS, JournalBlockType.TEXT_LINE, JournalBlockType.TAGS, JournalBlockType.TEXT_LINE)
+        val ids = repository.saveBlocks(date, types.map { JournalBlockDraft(type = it, text = if (it == JournalBlockType.TEXT_LINE) "文字" else null) })
+        val saved = repository.observeDocument(date).first()!!
+        assertEquals(types, saved.blocks.map { it.block.type })
+        assertEquals(ids, saved.blocks.map { it.block.id })
+        assertEquals("宁波", saved.entry.locationName)
+        assertEquals(setOf("生活", "旅行"), saved.tags.toSet())
+        assertTrue(saved.blocks.filter { it.block.type != JournalBlockType.TEXT_LINE }.all { it.media.isEmpty() && it.block.text == null })
+        repository.setLocation(date, "杭州")
+        assertEquals("杭州", repository.observeDocument(date).first()!!.entry.locationName)
+    }
+
+    @Test
+    fun componentRemovalCommitsCanonicalMetadataAndDocumentInOneTransaction() = runTest {
+        repository.setLocation(date, "宁波", 29.8, 121.5)
+        repository.setTags(date, listOf("旅行"))
+        insertGoal("goal", deletedAt = null)
+        repository.linkGoal(date, "goal")
+        val home = RoomHomeRepository(database, Clock.fixed(now, ZoneOffset.UTC)) { "linked-todo" }
+        val todo = home.createTodo("待办", date)
+        repository.linkTodo(date, todo)
+        repository.saveBlocks(date, listOf(JournalBlockType.LOCATION, JournalBlockType.TAGS, JournalBlockType.LINKS)
+            .map { JournalBlockDraft(type = it) })
+        repository.saveBlocksRemovingComponents(date,
+            listOf(JournalBlockDraft(id = "body", type = JournalBlockType.TEXT_LINE, text = "前后")),
+            setOf(JournalBlockType.LOCATION, JournalBlockType.TAGS, JournalBlockType.LINKS))
+        val saved = repository.observeDocument(date).first()!!
+        assertNull(saved.entry.locationName)
+        assertNull(saved.entry.latitude)
+        assertNull(saved.entry.longitude)
+        assertTrue(saved.tags.isEmpty())
+        assertTrue(saved.linkedGoalIds.isEmpty())
+        assertTrue(saved.linkedTodoIds.isEmpty())
+        assertEquals(listOf("前后"), saved.blocks.map { it.block.text })
+        assertNotNull(database.lifeGoalDao().findGoal("goal"))
+        assertNotNull(database.todoDao().findOccurrence(todo))
+    }
+
+    @Test
+    fun componentRemovalRollsMetadataBackIfBlockWriteFails() = runTest {
+        repository.setLocation(date, "保留位置", 29.8, 121.5)
+        repository.setTags(date, listOf("保留TAG"))
+        repository.saveBlocks(date, listOf(JournalBlockDraft(type = JournalBlockType.LOCATION), JournalBlockDraft(type = JournalBlockType.TAGS)))
+        val duplicate = JournalBlockDraft(id = "duplicate", type = JournalBlockType.TEXT_LINE, text = "same id")
+        assertTrue(runCatching {
+            repository.saveBlocksRemovingComponents(date, listOf(duplicate, duplicate),
+                setOf(JournalBlockType.LOCATION, JournalBlockType.TAGS))
+        }.isFailure)
+        val saved = repository.observeDocument(date).first()!!
+        assertEquals("保留位置", saved.entry.locationName)
+        assertEquals(listOf("保留TAG"), saved.tags)
+        assertEquals(listOf(JournalBlockType.LOCATION, JournalBlockType.TAGS), saved.blocks.map { it.block.type })
+    }
+
+    @Test
+    fun paragraphAlignmentAndIndependentChecklistStateSurviveRepositoryRecreation() = runTest {
+        val drafts = JournalListStyle.values().mapIndexed { index, style ->
+            JournalBlockDraft(type = JournalBlockType.TEXT_LINE, text = "原始文字 $index",
+                textAlignment = JournalTextAlignment.values()[index % 3], listStyle = style,
+                isChecked = style == JournalListStyle.CHECKLIST,
+                textStyleSpans = listOf(JournalTextStyleSpan(0, 2, bold = true)),
+            )
+        }
+        val ids = repository.saveBlocks(date, drafts)
+        val recreated = RoomJournalRepository(database)
+        val saved = recreated.observeDocument(date).first()!!.blocks.map { it.block }
+        assertEquals(drafts.map { it.text }, saved.map { it.text })
+        assertEquals(drafts.map { it.textAlignment }, saved.map { it.textAlignment })
+        assertEquals(drafts.map { it.listStyle }, saved.map { it.listStyle })
+        assertEquals(drafts.map { it.isChecked }, saved.map { it.isChecked })
+        assertEquals(drafts.map { it.textStyleSpans }, saved.map { it.textStyleSpans })
+        assertEquals(ids, saved.map { it.id })
+        recreated.saveBlocks(date, drafts.mapIndexed { index, draft -> draft.copy(id = ids[index], isChecked = false) })
+        assertTrue(repository.observeDocument(date).first()!!.blocks.none { it.block.isChecked })
+    }
+
+    @Test
+    fun nonChecklistCannotStoreCheckedState() = runTest {
+        val result = runCatching { repository.saveBlocks(date, listOf(
+            JournalBlockDraft(type = JournalBlockType.TEXT_LINE, text = "普通文字", isChecked = true),
+        )) }
+        assertTrue(result.exceptionOrNull() is IllegalArgumentException)
     }
 
     @Test
@@ -161,6 +272,9 @@ class RoomJournalRepositoryTest {
                             endExclusive = 5,
                             color = 0xFFED8FAE,
                             textSize = JournalTextSize.TITLE,
+                            bold = true,
+                            underline = true,
+                            highlightColor = 0x66FFE066,
                         ),
                     ),
                 ),
@@ -170,7 +284,12 @@ class RoomJournalRepositoryTest {
         val block = repository.observeDocument(date).first()!!.blocks.single().block
         assertEquals(JournalTextSize.LARGE, block.textSize)
         assertEquals(
-            listOf(JournalTextStyleSpan(2, 5, 0xFFED8FAE, JournalTextSize.TITLE)),
+            listOf(JournalTextStyleSpan(
+                2, 5, 0xFFED8FAE, JournalTextSize.TITLE,
+                bold = true,
+                underline = true,
+                highlightColor = 0x66FFE066,
+            )),
             block.textStyleSpans,
         )
     }

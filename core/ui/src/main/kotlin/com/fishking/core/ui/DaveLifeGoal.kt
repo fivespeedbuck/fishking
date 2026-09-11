@@ -98,12 +98,13 @@ fun DaveLifeGoalCard(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    val actionWidth = with(density) { 174.dp.toPx() }
+    val actionWidth = with(density) { 132.dp.toPx() }
     val moveThreshold = with(density) { 44.dp.toPx() }
     val scope = rememberCoroutineScope()
     var offsetX by remember(value.goal.id) { mutableFloatStateOf(0f) }
     var dragY by remember(value.goal.id) { mutableFloatStateOf(0f) }
     var journalDatesExpanded by remember(value.goal.id) { androidx.compose.runtime.mutableStateOf(false) }
+    val accent = value.goal.accentColor?.let(::Color) ?: DavePalette.Life
 
     fun settle(target: Float, after: (() -> Unit)? = null) {
         scope.launch {
@@ -116,23 +117,17 @@ fun DaveLifeGoalCard(
         modifier = modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
-            .clip(RoundedCornerShape(13.dp)),
+            .clip(RoundedCornerShape(13.dp))
+            .background(DavePalette.Card),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().fillMaxHeight(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Spacer(Modifier.weight(1f))
-            LifeSwipeAction(DavePalette.Habit, "加入今日待办", Icons.Outlined.AddTask) {
-                settle(0f, onAddToToday)
-            }
-            LifeSwipeAction(DavePalette.Meta, "编辑人生目标", Icons.Outlined.Edit) {
-                settle(0f, onEdit)
-            }
-            LifeSwipeAction(DavePalette.Urgent, "删除人生目标", Icons.Outlined.DeleteOutline) {
-                settle(0f, onDelete)
-            }
-        }
+        if (offsetX < -1f) DaveCardActionStrip(
+            actions = listOf(
+                DaveCardAction(Icons.Outlined.AddTask, "加入今日待办", accent) { settle(0f, onAddToToday) },
+                DaveCardAction(Icons.Outlined.Edit, "编辑人生目标", accent) { settle(0f, onEdit) },
+                DaveCardAction(Icons.Outlined.DeleteOutline, "删除人生目标", DavePalette.Urgent) { settle(0f, onDelete) },
+            ),
+            modifier = Modifier.align(Alignment.CenterEnd).width(132.dp),
+        )
 
         Row(
             modifier = Modifier
@@ -158,7 +153,7 @@ fun DaveLifeGoalCard(
                 modifier = Modifier
                     .width(18.dp)
                     .fillMaxHeight()
-                    .background(DavePalette.Life, RoundedCornerShape(topStart = 13.dp, bottomStart = 13.dp))
+                    .background(accent, RoundedCornerShape(topStart = 13.dp, bottomStart = 13.dp))
                     .pointerInput(value.goal.id) {
                         detectDragGesturesAfterLongPress(
                             onDrag = { change, amount ->
@@ -191,7 +186,7 @@ fun DaveLifeGoalCard(
                     .clip(CircleShape)
                     .border(
                         3.dp,
-                        if (value.currentResult == LifeGoalResult.CHECK) DavePalette.Completed else DavePalette.Ink,
+                        accent,
                         CircleShape,
                     )
                     .clickable(onClick = onToggleResult)
@@ -199,7 +194,7 @@ fun DaveLifeGoalCard(
                 contentAlignment = Alignment.Center,
             ) {
                 if (value.currentResult == LifeGoalResult.CHECK) {
-                    DaveDrawnCheck(DavePalette.Completed, Modifier.size(28.dp))
+                    DaveDrawnCheck(accent, 1f, Modifier.size(28.dp))
                 }
             }
             Column(
@@ -212,7 +207,7 @@ fun DaveLifeGoalCard(
                     DaveTitle(
                         text = value.goal.title,
                         modifier = Modifier.weight(1f, fill = false),
-                        color = DavePalette.Ink,
+                        color = accent,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.SemiBold,
                         textDecoration = if (value.currentResult == LifeGoalResult.CHECK) {
@@ -246,37 +241,37 @@ fun DaveLifeGoalCard(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Outlined.MenuBook,
                                 contentDescription = null,
-                                tint = DavePalette.Meta,
+                                tint = accent,
                                 modifier = Modifier.size(17.dp),
                             )
                         }
                     }
                     if (value.goal.type == LifeGoalType.ONGOING && value.events.isNotEmpty()) {
                         Text(
-                            lifeHistoryText(value.events),
+                            lifeHistoryText(value.events, accent),
                             modifier = Modifier.widthIn(max = 104.dp).padding(start = 4.dp),
-                            color = DavePalette.Ink.copy(alpha = .58f),
+                            color = accent.copy(alpha = .7f),
                             fontSize = 10.sp,
                             lineHeight = 12.sp,
                         )
                     }
                 }
                 value.goal.note?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, color = DavePalette.Ink.copy(alpha = .62f), fontSize = 13.sp, maxLines = 1)
+                    Text(it, color = accent.copy(alpha = .72f), fontSize = 13.sp, maxLines = 1)
                 }
                 run {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         if (value.currentResult == LifeGoalResult.CHECK) "1/1" else "0/1",
                         modifier = Modifier.padding(end = 7.dp),
-                        color = DavePalette.Ink,
+                        color = accent,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                     )
                     Text(
                         (listOf("人生清单") + tags).distinct().joinToString("  ") { "#$it" },
                         modifier = Modifier.weight(1f),
-                        color = DavePalette.Meta,
+                        color = accent,
                         fontSize = 12.sp,
                         maxLines = 1,
                     )
@@ -302,31 +297,11 @@ fun DaveLifeGoalCard(
                 modifier = Modifier.padding(end = 12.dp),
             ) {
                 Box(
-                    modifier = Modifier.rotate(8f).border(2.dp, DavePalette.Completed, RoundedCornerShape(2.dp))
+                    modifier = Modifier.rotate(8f).border(2.dp, accent, RoundedCornerShape(2.dp))
                         .padding(horizontal = 6.dp, vertical = 3.dp),
-                ) { Text("CLEAR", color = DavePalette.Completed, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                ) { Text("CLEAR", color = accent, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
             }
         }
-    }
-}
-
-@Composable
-private fun LifeSwipeAction(
-    color: Color,
-    description: String,
-    icon: ImageVector,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .width(58.dp)
-            .fillMaxHeight()
-            .background(color)
-            .clickable(onClick = onClick)
-            .semantics { contentDescription = description },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(25.dp))
     }
 }
 
@@ -367,6 +342,8 @@ fun DaveLifeGoalEditor(
     onConfirm: () -> Unit,
     onCancelEmpty: () -> Unit,
     modifier: Modifier = Modifier,
+    accentColor: Long? = null,
+    onAccentColorChange: (Long?) -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -377,20 +354,25 @@ fun DaveLifeGoalEditor(
     ) {
         DaveInlineDraftCard(
             value = title,
+            autoFocus = false,
+            accentColor = accentColor?.let(::Color) ?: DavePalette.Life,
             onValueChange = onTitleChange,
             onConfirm = onConfirm,
             onCancelEmpty = onCancelEmpty,
         )
         DaveLifeLineField(
             value = note,
+            color = accentColor?.let(::Color) ?: DavePalette.Life,
             onValueChange = onNoteChange,
             hint = "一行备注（可不填）",
         )
         DaveLifeLineField(
             value = tags,
+            color = accentColor?.let(::Color) ?: DavePalette.Life,
             onValueChange = onTagsChange,
             hint = "#旅行  #健康",
         )
+        DaveMacaronPalette(accentColor, onAccentColorChange, Modifier.padding(horizontal = 14.dp))
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(9.dp),
@@ -459,6 +441,7 @@ private fun DaveLifeLineField(
     value: String,
     onValueChange: (String) -> Unit,
     hint: String,
+    color: Color = DavePalette.Ink,
 ) {
     BasicTextField(
         value = value,
@@ -470,11 +453,11 @@ private fun DaveLifeLineField(
             .border(1.dp, DavePalette.Divider, RoundedCornerShape(9.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp),
         singleLine = true,
-        textStyle = TextStyle(color = DavePalette.Ink, fontSize = 15.sp),
-        cursorBrush = SolidColor(DavePalette.HeaderGreen),
+        textStyle = TextStyle(color = color, fontSize = 15.sp),
+        cursorBrush = SolidColor(color),
         decorationBox = { input ->
             Box(contentAlignment = Alignment.CenterStart) {
-                if (value.isBlank()) Text(hint, color = DavePalette.Ink.copy(alpha = .36f), fontSize = 14.sp)
+                if (value.isBlank()) Text(hint, color = color.copy(alpha = .48f), fontSize = 14.sp)
                 input()
             }
         },
@@ -666,15 +649,15 @@ private fun Modifier.offsetX(offset: Float): Modifier = offset {
     IntOffset(offset.roundToInt(), 0)
 }
 
-private fun lifeHistoryText(events: List<LifeGoalEvent>): AnnotatedString = buildAnnotatedString {
+private fun lifeHistoryText(events: List<LifeGoalEvent>, accent: Color): AnnotatedString = buildAnnotatedString {
     events.forEachIndexed { index, event ->
         if (index > 0) append(' ')
         withStyle(
             SpanStyle(
                 color = if (event.result == LifeGoalResult.CHECK) {
-                    DavePalette.Completed
+                    accent
                 } else {
-                    DavePalette.Ink.copy(alpha = .48f)
+                    accent.copy(alpha = .48f)
                 },
                 fontWeight = FontWeight.Bold,
             ),

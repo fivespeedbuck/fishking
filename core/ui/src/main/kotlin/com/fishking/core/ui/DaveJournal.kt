@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +27,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.ColorLens
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Flag
@@ -49,7 +50,6 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.SentimentSatisfiedAlt
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -85,6 +85,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -113,6 +114,13 @@ import androidx.media3.ui.PlayerView
 import com.fishking.core.model.DailyReview
 import com.fishking.core.model.LifeGoalWithEvents
 import com.fishking.core.model.JournalTextSize
+import com.fishking.core.model.JournalTextAlignment
+import com.fishking.core.model.JournalListStyle
+import com.fishking.core.model.journalListMarker
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import com.fishking.core.model.JournalTextStyleSpan
 import com.fishking.core.model.TodoPriority
 import kotlinx.coroutines.delay
@@ -121,6 +129,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 
@@ -159,10 +168,19 @@ fun DaveJournalLine(
     modifier: Modifier = Modifier,
     minHeight: Dp = 48.dp,
     maxHeight: Dp = 300.dp,
+    cardStyle: Boolean = true,
+    readOnly: Boolean = false,
+    placeholder: String? = "写点什么…",
+    textAlignment: JournalTextAlignment = JournalTextAlignment.LEFT,
+    listStyle: JournalListStyle = JournalListStyle.NONE,
+    listOrdinal: Int = 1,
+    isChecked: Boolean = false,
+    onToggleChecked: () -> Unit = {},
 ) {
     val focusRequester = remember { FocusRequester() }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
+    val quietCanvasAnchor = !cardStyle && value.text.isEmpty() && !selected
     LaunchedEffect(focusRequestToken) {
         if (focusRequestToken > 0L) {
             focusRequester.requestFocus()
@@ -174,38 +192,63 @@ fun DaveJournalLine(
             append(value.text)
             styleSpans.forEach { span ->
                 if (span.start < span.endExclusive && span.endExclusive <= value.text.length) {
-                    addStyle(
-                        SpanStyle(
-                            color = span.color?.let(::Color) ?: Color.Unspecified,
-                            fontSize = span.textSize?.toSp() ?: androidx.compose.ui.unit.TextUnit.Unspecified,
-                        ),
-                        span.start,
-                        span.endExclusive,
-                    )
+                    addStyle(span.toComposeSpanStyle(), span.start, span.endExclusive)
                 }
             }
         }
     }
-    DaveSwipeDeleteContainer(onDelete = onDelete, modifier = modifier, textGestures = true) {
+    DaveSwipeDeleteContainer(
+        onDelete = onDelete,
+        modifier = if (readOnly) modifier.clickable(onClick = onSelected) else modifier,
+        textGestures = true,
+        cardStyle = cardStyle,
+        enabled = !readOnly,
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        if (listStyle == JournalListStyle.CHECKLIST) {
+            Box(
+                Modifier.padding(top = 3.dp).size(36.dp)
+                    .clickable(enabled = !readOnly, role = Role.Checkbox, onClick = onToggleChecked)
+                    .semantics {
+                        contentDescription = "勾选清单项 ${value.text}"
+                        toggleableState = if (isChecked) ToggleableState.On else ToggleableState.Off
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(Modifier.size(21.dp).border(2.dp, textColor?.let(::Color) ?: DavePalette.HeaderGreenDark, RoundedCornerShape(4.dp)))
+                if (isChecked) DaveDrawnCheck(textColor?.let(::Color) ?: DavePalette.HeaderGreenDark, 1f, Modifier.size(19.dp))
+            }
+        } else if (listStyle != JournalListStyle.NONE) {
+            Text(journalListMarker(listStyle, listOrdinal),
+                color = if (listStyle == JournalListStyle.CHECKLIST && isChecked) Color(0xFF69655F)
+                    else textColor?.let(::Color) ?: DavePalette.Ink,
+                fontSize = textSize.toSp(),
+                modifier = Modifier.width(38.dp).padding(top = 7.dp, end = 6.dp),
+                textAlign = TextAlign.End)
+        }
         BasicTextField(
             value = TextFieldValue(annotated, value.selection, value.composition),
             onValueChange = { next ->
                 onValueChange(TextFieldValue(next.text, next.selection, next.composition))
             },
             modifier = Modifier
-                .fillMaxWidth()
+                .weight(1f)
                 .defaultMinSize(minHeight = minHeight)
                 .heightIn(max = maxHeight)
-                .background(
-                    Color.White,
-                    RoundedCornerShape(10.dp),
-                )
+                .then(if (cardStyle) Modifier.background(Color.White, RoundedCornerShape(10.dp)) else Modifier.background(Color.Transparent))
                 .then(
-                    if (selected) Modifier.border(1.dp, DavePalette.Meta.copy(alpha = .55f), RoundedCornerShape(10.dp))
+                    if (selected && cardStyle) Modifier.border(1.dp, DavePalette.Meta.copy(alpha = .55f), RoundedCornerShape(10.dp))
                     else Modifier,
                 )
-                .clip(RoundedCornerShape(10.dp))
-                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .then(if (cardStyle) Modifier.clip(RoundedCornerShape(10.dp)) else Modifier)
+                .padding(
+                    horizontal = if (cardStyle) 14.dp else 2.dp,
+                    vertical = when {
+                        cardStyle -> 10.dp
+                        quietCanvasAnchor -> 0.dp
+                        else -> 7.dp
+                    },
+                )
                 .focusRequester(focusRequester)
                 .bringIntoViewRequester(bringIntoViewRequester)
                 .onFocusChanged {
@@ -215,25 +258,37 @@ fun DaveJournalLine(
                     }
                 },
             textStyle = TextStyle(
-                color = textColor?.let(::Color) ?: DavePalette.Ink,
+                color = if (listStyle == JournalListStyle.CHECKLIST && isChecked) Color(0xFF69655F)
+                    else textColor?.let(::Color) ?: DavePalette.Ink,
                 fontSize = textSize.toSp(),
                 lineHeight = (maxOf(textSize.toSp().value, styleSpans.maxOfOrNull { it.textSize?.toSp()?.value ?: 0f } ?: 0f) * 1.45f).sp,
+                textAlign = textAlignment.toComposeTextAlign(),
+                textDecoration = if (listStyle == JournalListStyle.CHECKLIST && isChecked) TextDecoration.LineThrough else TextDecoration.None,
             ),
             cursorBrush = SolidColor(DavePalette.HeaderGreen),
+            enabled = !readOnly,
             decorationBox = { input ->
                 Box(contentAlignment = Alignment.TopStart) {
-                    if (value.text.isEmpty()) Text("写点什么…", color = DavePalette.Ink.copy(alpha = .28f), fontSize = 17.sp)
+                    if (value.text.isEmpty() && placeholder != null) Text(placeholder, color = DavePalette.Ink.copy(alpha = .28f), fontSize = 17.sp)
                     input()
                 }
             },
         )
+        }
     }
+}
+
+internal fun JournalTextAlignment.toComposeTextAlign(): TextAlign = when (this) {
+    JournalTextAlignment.LEFT -> TextAlign.Left
+    JournalTextAlignment.CENTER -> TextAlign.Center
+    JournalTextAlignment.RIGHT -> TextAlign.Right
 }
 
 @Composable
 fun DaveJournalTitle(value: TextFieldValue, color: Long?, textSize: JournalTextSize,
     styleSpans: List<JournalTextStyleSpan>, focusRequestToken: Long,
-    onValueChange: (TextFieldValue) -> Unit, onSelected: () -> Unit) {
+    onValueChange: (TextFieldValue) -> Unit, onSelected: () -> Unit, readOnly: Boolean = false,
+    textAlignment: JournalTextAlignment = JournalTextAlignment.LEFT) {
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(focusRequestToken) { if (focusRequestToken > 0L) focusRequester.requestFocus() }
     val annotated = remember(value.text, styleSpans) {
@@ -241,17 +296,20 @@ fun DaveJournalTitle(value: TextFieldValue, color: Long?, textSize: JournalTextS
             append(value.text)
             styleSpans.forEach { span ->
                 if (span.start < span.endExclusive && span.endExclusive <= value.text.length) addStyle(
-                    SpanStyle(color = span.color?.let(::Color) ?: Color.Unspecified,
-                        fontSize = span.textSize?.toSp() ?: androidx.compose.ui.unit.TextUnit.Unspecified),
+                    span.toComposeSpanStyle(),
                     span.start, span.endExclusive)
             }
         }
     }
     BasicTextField(value = TextFieldValue(annotated, value.selection, value.composition),
         onValueChange = { onValueChange(TextFieldValue(it.text, it.selection, it.composition)) },
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).focusRequester(focusRequester).onFocusChanged { if (it.isFocused) onSelected() },
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            .then(if (readOnly) Modifier.clickable(onClick = onSelected) else Modifier)
+            .focusRequester(focusRequester).onFocusChanged { if (it.isFocused) onSelected() },
+        enabled = !readOnly,
         textStyle = TextStyle(color = color?.let(::Color) ?: DavePalette.Ink, fontSize = textSize.toSp(),
             lineHeight = (maxOf(textSize.toSp().value, styleSpans.maxOfOrNull { it.textSize?.toSp()?.value ?: 0f } ?: 0f) * 1.45f).sp,
+            textAlign = textAlignment.toComposeTextAlign(),
             fontWeight = FontWeight.SemiBold),
         cursorBrush = SolidColor(DavePalette.HeaderGreen),
         decorationBox = { input ->
@@ -269,8 +327,9 @@ fun DaveJournalRecordingBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .heightIn(min = 78.dp)
             .background(DavePalette.JournalPaper, RoundedCornerShape(14.dp))
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(11.dp).background(DavePalette.Urgent, CircleShape))
@@ -290,15 +349,19 @@ fun DaveJournalRecordingBar(
 @Composable
 fun DaveSwipeDeleteContainer(
     onDelete: () -> Unit,
+    onEdit: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     textGestures: Boolean = false,
+    cardStyle: Boolean = true,
+    cardColor: Color = DavePalette.JournalPaper,
+    enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val actionWidth = with(density) { 62.dp.toPx() }
+    val actionWidthDp = if (onEdit == null) 48.dp else 90.dp
+    val actionWidth = with(density) { actionWidthDp.toPx() }
     val scope = rememberCoroutineScope()
     var offsetX by remember { mutableFloatStateOf(0f) }
-    var contentHeight by remember { mutableStateOf(48.dp) }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
 
@@ -309,35 +372,36 @@ fun DaveSwipeDeleteContainer(
     }
 
     Box(modifier = modifier.fillMaxWidth()) {
-        if (offsetX < -1f) Box(
+        if (enabled && offsetX < -1f) Box(
             modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .width(62.dp)
-                .height(contentHeight)
-                .clip(RoundedCornerShape(topEnd = 10.dp, bottomEnd = 10.dp))
-                .background(DavePalette.Urgent)
-                .clickable {
-                    settle(0f)
-                    onDelete()
-                }
-                .semantics { contentDescription = "删除这一项" },
-            contentAlignment = Alignment.Center,
+                .matchParentSize()
+                .then(if (cardStyle) Modifier.clip(RoundedCornerShape(10.dp)) else Modifier)
+                .background(if (cardStyle) cardColor else Color.Transparent),
+            contentAlignment = Alignment.CenterEnd,
         ) {
-            Icon(
-                Icons.Outlined.DeleteOutline,
-                null,
-                tint = Color.White,
-                modifier = Modifier.size(22.dp),
+            DaveCardActionStrip(
+                actions = buildList {
+                    onEdit?.let { edit ->
+                        add(DaveCardAction(Icons.Outlined.Edit, "编辑这一项", DavePalette.HeaderGreenDark) {
+                            settle(0f)
+                            edit()
+                        })
+                    }
+                    add(DaveCardAction(Icons.Outlined.DeleteOutline, "删除这一项", DavePalette.Urgent) {
+                        settle(0f)
+                        onDelete()
+                    })
+                },
+                modifier = Modifier.width(actionWidthDp),
             )
         }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .offset { IntOffset(offsetX.roundToInt(), 0) }
-                .clip(RoundedCornerShape(10.dp))
-                .background(DavePalette.JournalPaper)
-                .onSizeChanged { contentHeight = with(density) { it.height.toDp() } }
-                .then(if (textGestures) Modifier.daveTextSwipe(
+                .then(if (cardStyle) Modifier.clip(RoundedCornerShape(10.dp)) else Modifier)
+                .background(if (cardStyle) cardColor else Color.Transparent)
+                .then(if (!enabled) Modifier else if (textGestures) Modifier.daveTextSwipe(
                     onStart = { focusManager.clearFocus(); keyboard?.hide() },
                     onDelta = { amount -> offsetX = (offsetX + amount).coerceIn(-actionWidth, 0f) },
                     onEnd = { settle(if (offsetX <= -actionWidth * .42f) -actionWidth else 0f) },
@@ -364,6 +428,21 @@ private fun JournalTextSize.toSp() = when (this) {
     JournalTextSize.TITLE -> 28.sp
 }
 
+private fun JournalTextStyleSpan.toComposeSpanStyle(): SpanStyle {
+    val decorations = buildList {
+        if (underline) add(TextDecoration.Underline)
+        if (strikethrough) add(TextDecoration.LineThrough)
+    }
+    return SpanStyle(
+        color = color?.let(::Color) ?: Color.Unspecified,
+        fontSize = textSize?.toSp() ?: androidx.compose.ui.unit.TextUnit.Unspecified,
+        fontWeight = if (bold) FontWeight.Bold else null,
+        fontStyle = if (italic) FontStyle.Italic else null,
+        textDecoration = decorations.takeIf { it.isNotEmpty() }?.let { TextDecoration.combine(it) },
+        background = highlightColor?.let(::Color) ?: Color.Unspecified,
+    )
+}
+
 @Composable
 @SuppressLint("ProduceStateDoesNotAssignValue")
 fun DaveJournalImageRow(
@@ -371,6 +450,7 @@ fun DaveJournalImageRow(
     onDeleteImage: (Int) -> Unit,
     modifier: Modifier = Modifier,
     motionVideos: Map<String, String> = emptyMap(),
+    editable: Boolean = true,
 ) {
     var fullScreenIndex by remember(paths) { mutableStateOf<Int?>(null) }
     var motionPlaying by remember(paths) { mutableStateOf<String?>(null) }
@@ -389,7 +469,7 @@ fun DaveJournalImageRow(
                     val decodedBitmap = withContext(Dispatchers.IO) { decodeSampled(path, 1_080) }
                     this.value = decodedBitmap
                 }
-                DaveSwipeDeleteContainer(onDelete = { onDeleteImage(index) }, modifier = Modifier.weight(1f)) {
+                DaveSwipeDeleteContainer(onDelete = { onDeleteImage(index) }, modifier = Modifier.weight(1f), enabled = editable) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -421,16 +501,13 @@ fun DaveJournalImageRow(
                 path = path,
                 motionVideo = motionVideos[path],
                 onDismiss = { fullScreenIndex = null },
-                onDelete = {
-                    fullScreenIndex = null
-                    onDeleteImage(index)
-                },
             )
         }
     }
     motionPlaying?.let { video -> DaveVideoPlayerDialog(video, onDismiss = { motionPlaying = null }, closeWhenEnded = false) }
 }
 
+@SuppressLint("ProduceStateDoesNotAssignValue")
 @Composable
 fun DaveJournalTimelineThumbnails(
     paths: List<String>,
@@ -480,6 +557,7 @@ fun DaveJournalGifBlock(
     path: String,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
+    editable: Boolean = true,
 ) {
     var playing by remember(path) { mutableStateOf(false) }
     var fullScreen by remember(path) { mutableStateOf(false) }
@@ -502,7 +580,7 @@ fun DaveJournalGifBlock(
         this.value = decodedState
     }
     val drawable = decoded.drawable
-    DaveSwipeDeleteContainer(onDelete = onDelete, modifier = modifier) {
+    DaveSwipeDeleteContainer(onDelete = onDelete, modifier = modifier, enabled = editable) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -600,6 +678,7 @@ fun DaveJournalVideoBlock(
     durationMillis: Long?,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
+    editable: Boolean = true,
 ) {
     var fullScreen by remember(path) { mutableStateOf(false) }
     val thumbnail by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, path) {
@@ -616,7 +695,7 @@ fun DaveJournalVideoBlock(
         }
         this.value = decodedThumbnail
     }
-    DaveSwipeDeleteContainer(onDelete = onDelete, modifier = modifier) {
+    DaveSwipeDeleteContainer(onDelete = onDelete, modifier = modifier, enabled = editable) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -653,6 +732,7 @@ fun DaveJournalAudioBlock(
     durationMillis: Long?,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
+    editable: Boolean = true,
 ) {
     val context = LocalContext.current
     val player = remember(path) {
@@ -664,6 +744,7 @@ fun DaveJournalAudioBlock(
     var playing by remember(path) { mutableStateOf(false) }
     var position by remember(path) { mutableStateOf(0L) }
     var resolvedDuration by remember(path, durationMillis) { mutableStateOf(durationMillis ?: 0L) }
+    var seekBarWidth by remember(path) { mutableFloatStateOf(0f) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -690,7 +771,7 @@ fun DaveJournalAudioBlock(
             delay(200L)
         }
     }
-    DaveSwipeDeleteContainer(onDelete = onDelete, modifier = modifier) {
+    DaveSwipeDeleteContainer(onDelete = onDelete, modifier = modifier, enabled = editable) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -720,15 +801,37 @@ fun DaveJournalAudioBlock(
             )
         }
         Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
-            Slider(
-                value = position.coerceIn(0L, resolvedDuration.coerceAtLeast(1L)).toFloat(),
-                onValueChange = {
-                    position = it.toLong()
-                    player.seekTo(position)
-                },
-                valueRange = 0f..resolvedDuration.coerceAtLeast(1L).toFloat(),
-                modifier = Modifier.fillMaxWidth().height(28.dp),
-            )
+            // Dragging the old Material Slider won the horizontal gesture from
+            // the surrounding swipe-to-delete container. A compact tap-to-seek
+            // track keeps seeking available while a left drag anywhere across
+            // the recording consistently reveals its delete action.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(28.dp)
+                    .onSizeChanged { seekBarWidth = it.width.toFloat() }
+                    .pointerInput(player, resolvedDuration, seekBarWidth) {
+                        detectTapGestures { point ->
+                            if (seekBarWidth > 0f && resolvedDuration > 0L) {
+                                position = (resolvedDuration * (point.x / seekBarWidth).coerceIn(0f, 1f)).toLong()
+                                player.seekTo(position)
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Box(
+                    Modifier.fillMaxWidth().height(5.dp)
+                        .background(DavePalette.Meta.copy(alpha = .22f), RoundedCornerShape(50)),
+                )
+                val seekFraction = if (resolvedDuration > 0L) {
+                    (position.toFloat() / resolvedDuration.toFloat()).coerceIn(0f, 1f)
+                } else 0f
+                if (seekFraction > 0f) Box(
+                    Modifier.fillMaxWidth(seekFraction).height(5.dp)
+                        .background(DavePalette.HeaderGreen, RoundedCornerShape(50)),
+                )
+            }
             Text(
                 "${formatDuration(position)} / ${formatDuration(resolvedDuration)}",
                 color = DavePalette.Ink.copy(alpha = .62f),
@@ -741,7 +844,7 @@ fun DaveJournalAudioBlock(
 
 @Composable
 @SuppressLint("ProduceStateDoesNotAssignValue")
-private fun DaveFullScreenImage(path: String, onDismiss: () -> Unit, onDelete: (() -> Unit)? = null, motionVideo: String? = null) {
+private fun DaveFullScreenImage(path: String, onDismiss: () -> Unit, motionVideo: String? = null) {
     var motionPlaying by remember(path) { mutableStateOf(false) }
     val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, path) {
         val decodedBitmap = withContext(Dispatchers.IO) { decodeSampled(path, 2_400) }
@@ -781,21 +884,6 @@ private fun DaveFullScreenImage(path: String, onDismiss: () -> Unit, onDelete: (
                         },
                     contentScale = ContentScale.Fit,
                 )
-            }
-            onDelete?.let { delete ->
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp)
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(DavePalette.Urgent.copy(alpha = .9f), CircleShape)
-                        .clickable(onClick = delete)
-                        .semantics { contentDescription = "删除当前照片" },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Outlined.DeleteOutline, null, tint = Color.White, modifier = Modifier.size(24.dp))
-                }
             }
             if (motionVideo != null) DaveMotionPhotoButton(onClick = { motionPlaying = true },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp))
@@ -992,14 +1080,14 @@ fun DaveLocationEditor(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color.White.copy(alpha = .35f), RoundedCornerShape(10.dp))
+            .background(DavePalette.JournalPaper, RoundedCornerShape(10.dp))
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.weight(1f).background(DavePalette.Card, RoundedCornerShape(8.dp)).padding(10.dp),
+            modifier = Modifier.weight(1f).background(DavePalette.JournalPaper, RoundedCornerShape(8.dp)).padding(10.dp),
             singleLine = true,
             textStyle = TextStyle(color = DavePalette.Ink, fontSize = 15.sp),
             cursorBrush = SolidColor(DavePalette.HeaderGreen),
