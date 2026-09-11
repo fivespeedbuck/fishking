@@ -1,14 +1,14 @@
 {
-  "tag_name": "v0.1.11",
-  "name": "咸鱼大王 0.1.11 (Build 23)",
-  "body": "新增可切换的习惯周视图皮肤：默认整体大卡无间隔样式，保留分卡间隔样式；今日列连续浅薄荷色显示；非计划日期使用标准空集标记；移除 Claude 纸质背景皮肤。此 APK 沿用 Android Debug 签名，不是应用商店生产签名包。",
-  "html_url": "https://github.com/fivespeedbuck/fishking/releases/tag/v0.1.11",
+  "tag_name": "v0.1.13",
+  "name": "咸鱼大王 0.1.13 (Build 25)",
+  "body": "主页单日视图上下切换日期改为原位淡出、切日后淡入；保留列表边界阻尼、56dp 切日阈值和切日后回到列表顶部的行为，卡片完成与撤销动效不变。旧习惯历史数据的性能问题不包含在本版本修复中。此 APK 沿用 Android Debug 签名，不是应用商店生产签名包。",
+  "html_url": "https://github.com/fivespeedbuck/fishking/releases/tag/v0.1.13",
   "assets": [
     {
-      "name": "fishking-0.1.11-build23-standard-empty-set-debug.apk",
-      "browser_download_url": "https://github.com/fivespeedbuck/fishking/releases/download/v0.1.11/fishking-0.1.11-build23-standard-empty-set-debug.apk",
-      "size": 21970357,
-      "digest": "sha256:7E24E9EE6E39E866C8B3977B54BB4BEEA07E4C99C3DAEC2338B953470C2D27FA"
+      "name": "fishking-0.1.13-build25-day-fade-debug.apk",
+      "browser_download_url": "https://github.com/fivespeedbuck/fishking/releases/download/v0.1.13/fishking-0.1.13-build25-day-fade-debug.apk",
+      "size": 21837787,
+      "digest": "sha256:DFDF1CB88734441FB69F603696E5313BFF022C444D94FF815602E31C2B6FA9CF"
     }
   ]
 }

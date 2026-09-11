@@ -486,7 +486,7 @@ fun HomeScreen(
     val thresholdPx = with(density) { 56.dp.toPx() }
     val maxPullPx = with(density) { 96.dp.toPx() }
     var edgePull by remember { mutableFloatStateOf(0f) }
-    var viewportHeightPx by remember { mutableFloatStateOf(0f) }
+    var dayContentAlpha by remember { mutableFloatStateOf(1f) }
     var viewportBounds by remember { mutableStateOf(Rect.Zero) }
 
     val edgeConnection = remember(listState, thresholdPx, maxPullPx) {
@@ -515,25 +515,36 @@ fun HomeScreen(
                 val releasedPull = edgePull
                 if (abs(releasedPull) >= thresholdPx) {
                     val direction = if (releasedPull < 0f) 1 else -1
-                    val travel = viewportHeightPx.takeIf { it > maxPullPx } ?: maxPullPx * 4f
-                    val outgoing = if (direction > 0) -travel else travel
+                    try {
+                        // Keep the released overscroll position still while the old
+                        // day fades away. Once it is invisible, reset the translation
+                        // and reveal the new day in place so date changes never fly
+                        // through the viewport.
+                        animate(
+                            initialValue = 1f,
+                            targetValue = 0f,
+                            animationSpec = tween(110),
+                        ) { value, _ -> dayContentAlpha = value }
+                        edgePull = 0f
+                        currentDateChange(currentDate.plusDays(direction.toLong()))
+                        listState.scrollToItem(0)
+                        androidx.compose.runtime.withFrameNanos { }
+                        animate(
+                            initialValue = 0f,
+                            targetValue = 1f,
+                            animationSpec = tween(durationMillis = 170, delayMillis = 55),
+                        ) { value, _ -> dayContentAlpha = value }
+                    } finally {
+                        edgePull = 0f
+                        dayContentAlpha = 1f
+                    }
+                } else {
                     animate(
-                        initialValue = releasedPull,
-                        targetValue = outgoing,
-                        animationSpec = tween(145),
+                        initialValue = edgePull,
+                        targetValue = 0f,
+                        animationSpec = tween(220),
                     ) { value, _ -> edgePull = value }
-                    currentDateChange(currentDate.plusDays(direction.toLong()))
-                    listState.scrollToItem(0)
-                    // Give Compose a frame to replace the day's facts, then bring the
-                    // new day in from the opposite edge instead of flashing in place.
-                    androidx.compose.runtime.withFrameNanos { }
-                    edgePull = -outgoing
                 }
-                animate(
-                    initialValue = edgePull,
-                    targetValue = 0f,
-                    animationSpec = tween(if (abs(releasedPull) >= thresholdPx) 230 else 220),
-                ) { value, _ -> edgePull = value }
                 return if (releasedPull != 0f) available else Velocity.Zero
             }
         }
@@ -721,10 +732,12 @@ fun HomeScreen(
             userScrollEnabled = scene == null,
             modifier = Modifier
                 .fillMaxSize()
-                .onSizeChanged { viewportHeightPx = it.height.toFloat() }
                 .onGloballyPositioned { viewportBounds = it.boundsInRoot() }
                 .nestedScroll(edgeConnection)
-                .graphicsLayer { translationY = edgePull },
+                .graphicsLayer {
+                    translationY = edgePull
+                    alpha = dayContentAlpha
+                },
         ) {
             if (draftVisible) {
                 item(key = "draft") {
