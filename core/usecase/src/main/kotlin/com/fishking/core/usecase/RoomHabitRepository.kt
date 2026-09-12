@@ -8,13 +8,16 @@ import com.fishking.core.database.HabitVersionEntity
 import com.fishking.core.database.HabitWeekSkipEntity
 import com.fishking.core.database.toModel
 import com.fishking.core.model.HabitDayState
+import com.fishking.core.model.HabitDayRecord
 import com.fishking.core.model.HabitPeriod
 import com.fishking.core.model.HabitRules
 import com.fishking.core.model.HabitScheduleRules
 import com.fishking.core.model.HabitVersion
 import com.fishking.core.model.HabitWeekItem
 import com.fishking.core.model.HabitWeekSnapshot
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import java.time.Clock
 import java.time.LocalDate
 import java.util.UUID
@@ -34,12 +37,13 @@ class RoomHabitRepository(
 
     override fun observeWeek(weekStart: LocalDate) = HabitRules.weekStart(weekStart).let { week ->
         combine(habitDao.observeAllHabits(), habitDao.observeAllVersions(), habitDao.observeAllRecords(), habitDao.observeAllSkips()) { habits, versions, records, skips ->
+            val index = HabitProjectionIndex(versions, records, skips)
             val end = week.plusDays(6)
             habits.filter { !it.startDate.isAfter(end) }
                 .filter { habit -> habit.endedFromWeek?.isAfter(week) != false }
-                .mapNotNull { itemForWeek(it, versions, records, skips, week) }
+                .mapNotNull { itemForWeek(it, index, week) }
                 .sortedBy(HabitWeekItem::position)
-        }
+        }.flowOn(Dispatchers.Default)
     }
 
     override fun observeTimeline(currentDate: LocalDate) = timeline(currentDate, null)
@@ -49,6 +53,7 @@ class RoomHabitRepository(
     private fun timeline(currentDate: LocalDate, fromWeek: LocalDate?, throughWeek: LocalDate? = null) = combine(
         habitDao.observeAllHabits(), habitDao.observeAllVersions(), habitDao.observeAllRecords(), habitDao.observeAllSkips(),
     ) { habits, versions, records, skips ->
+        val index = HabitProjectionIndex(versions, records, skips)
         val currentWeek = HabitRules.weekStart(currentDate)
         val active = habits.filter { !it.startDate.isAfter(currentDate) }
         val earliest = fromWeek ?: active.minOfOrNull { HabitRules.weekStart(it.startDate) } ?: return@combine emptyList()
@@ -56,14 +61,14 @@ class RoomHabitRepository(
             .toList().asReversed().map { week ->
                 HabitWeekSnapshot(week, active.asSequence()
                     .filter { habit -> (fromWeek != null || !habit.startDate.isAfter(week.plusDays(6))) && habit.endedFromWeek?.isAfter(week) != false }
-                    .mapNotNull { itemForWeek(it, versions, records, skips, week, currentDate) }
+                    .mapNotNull { itemForWeek(it, index, week, currentDate) }
                     .sortedBy(HabitWeekItem::position).toList())
             }
-    }
+    }.flowOn(Dispatchers.Default)
 
-    private fun itemForWeek(habit: HabitEntity, allVersions: List<HabitVersionEntity>, allRecords: List<HabitDayRecordEntity>, skips: List<HabitWeekSkipEntity>, week: LocalDate, referenceDate: LocalDate = week): HabitWeekItem? {
+    private fun itemForWeek(habit: HabitEntity, index: HabitProjectionIndex, week: LocalDate, referenceDate: LocalDate = week): HabitWeekItem? {
         val end = week.plusDays(6)
-        val versions = allVersions.asSequence().filter { it.habitId == habit.id }.map { it.toModel() }.toList()
+        val versions = index.versionsByHabit[habit.id].orEmpty()
         val activeInWeek = versions.filter { version -> !version.effectiveFromDate.isAfter(end) && version.effectiveUntilExclusive?.isAfter(week) != false }
         // An explicit backfill range can intentionally include weeks before the first saved
         // version. Keep the initial rule visible there without changing normal date lookup.
@@ -82,8 +87,30 @@ class RoomHabitRepository(
             id = habit.id, title = summary.title, color = summary.color, startDate = habit.startDate, position = habit.position,
             weekStart = week, versionId = summary.id, period = summary.period, targetCount = summary.targetCount,
             scheduleDays = summary.scheduleDays, intervalDays = summary.intervalDays, scheduleStartDate = summary.scheduleStartDate,
-            isSkipped = skips.any { it.habitId == habit.id && it.weekStart == week },
-            records = allRecords.asSequence().filter { it.habitId == habit.id }.map { it.toModel() }.toList(), versions = intersecting,
+            isSkipped = HabitWeekKey(habit.id, week) in index.skippedWeeks,
+            // The indexed immutable list is intentionally shared by every visible week for
+            // this habit. Older code converted and copied the entire history once per week.
+            records = index.recordsByHabit[habit.id].orEmpty(), versions = intersecting,
+        )
+    }
+
+    private data class HabitWeekKey(val habitId: String, val weekStart: LocalDate)
+
+    private data class HabitProjectionIndex(
+        val versionsByHabit: Map<String, List<HabitVersion>>,
+        val recordsByHabit: Map<String, List<HabitDayRecord>>,
+        val skippedWeeks: Set<HabitWeekKey>,
+    ) {
+        constructor(
+            versions: List<HabitVersionEntity>,
+            records: List<HabitDayRecordEntity>,
+            skips: List<HabitWeekSkipEntity>,
+        ) : this(
+            versionsByHabit = versions.groupBy(HabitVersionEntity::habitId)
+                .mapValues { (_, values) -> values.map { it.toModel() } },
+            recordsByHabit = records.groupBy(HabitDayRecordEntity::habitId)
+                .mapValues { (_, values) -> values.map { it.toModel() } },
+            skippedWeeks = skips.mapTo(HashSet(skips.size)) { HabitWeekKey(it.habitId, it.weekStart) },
         )
     }
 

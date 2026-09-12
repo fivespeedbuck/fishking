@@ -13,13 +13,34 @@ interface HabitDao {
     @Query("SELECT * FROM habits WHERE deletedAt IS NULL ORDER BY position ASC")
     fun observeAllHabits(): Flow<List<HabitEntity>>
 
-    @Query("SELECT * FROM habit_versions ORDER BY habitId, effectiveFromWeek ASC")
+    @Query(
+        """
+        SELECT habit_versions.* FROM habit_versions
+        INNER JOIN habits ON habits.id = habit_versions.habitId
+        WHERE habits.deletedAt IS NULL
+        ORDER BY habit_versions.habitId, habit_versions.effectiveFromWeek ASC
+        """,
+    )
     fun observeAllVersions(): Flow<List<HabitVersionEntity>>
 
-    @Query("SELECT * FROM habit_day_records ORDER BY date ASC")
+    @Query(
+        """
+        SELECT habit_day_records.* FROM habit_day_records
+        INNER JOIN habits ON habits.id = habit_day_records.habitId
+        WHERE habits.deletedAt IS NULL
+        ORDER BY habit_day_records.habitId, habit_day_records.date ASC
+        """,
+    )
     fun observeAllRecords(): Flow<List<HabitDayRecordEntity>>
 
-    @Query("SELECT * FROM habit_week_skips ORDER BY weekStart ASC")
+    @Query(
+        """
+        SELECT habit_week_skips.* FROM habit_week_skips
+        INNER JOIN habits ON habits.id = habit_week_skips.habitId
+        WHERE habits.deletedAt IS NULL
+        ORDER BY habit_week_skips.habitId, habit_week_skips.weekStart ASC
+        """,
+    )
     fun observeAllSkips(): Flow<List<HabitWeekSkipEntity>>
 
     @Query(

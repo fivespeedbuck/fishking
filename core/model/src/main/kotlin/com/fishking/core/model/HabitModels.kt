@@ -3,6 +3,7 @@ package com.fishking.core.model
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
+import java.util.concurrent.ConcurrentHashMap
 
 enum class HabitPeriod {
     DAILY,
@@ -96,7 +97,13 @@ data class HabitWeekItem(
     /** All versions intersecting this week. Existing callers can keep using the summary fields. */
     val versions: List<HabitVersion> = emptyList(),
 ) {
-    fun countOn(date: LocalDate): Int = records.firstOrNull { it.date == date }?.count ?: 0
+    // A week card asks for the same seven dates repeatedly during Compose measurement,
+    // animation and recomposition. Cache the immutable projection instead of rescanning the
+    // habit's complete history for every call. This cache is deliberately outside data-class
+    // equality/copy state; a copied item starts with a fresh cache for its copied fields.
+    private val dayStates = ConcurrentHashMap<LocalDate, HabitDayState>()
+
+    fun countOn(date: LocalDate): Int = dayState(date).actualCount
 
     val weeklyEffectiveDayCount: Int get() = effectiveCountFor(weekStart.plusDays(6))
 
@@ -120,15 +127,13 @@ data class HabitWeekItem(
         )
     }
 
-    fun effectiveCountFor(date: LocalDate): Int = HabitScheduleRules
-        .state(ruleOn(date), records, date)
-        .periodCount
+    fun effectiveCountFor(date: LocalDate): Int = dayState(date).periodCount
 
-    fun isScheduledOn(date: LocalDate): Boolean = HabitScheduleRules
-        .state(ruleOn(date), records, date)
-        .isPlannedDate
+    fun isScheduledOn(date: LocalDate): Boolean = dayState(date).isPlannedDate
 
-    fun dayState(date: LocalDate): HabitDayState = HabitScheduleRules.state(ruleOn(date), records, date)
+    fun dayState(date: LocalDate): HabitDayState = dayStates.getOrPut(date) {
+        HabitScheduleRules.state(ruleOn(date), records, date)
+    }
 }
 
 data class HabitWeekSnapshot(

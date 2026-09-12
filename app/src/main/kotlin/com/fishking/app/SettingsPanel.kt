@@ -21,8 +21,10 @@ import kotlinx.coroutines.withContext
 
 @Composable
 internal fun SettingsPanel(backup: FishKingBackup, habitSkin: HabitWeekSkin, backgroundSkin: AppBackgroundSkin, tags: String,
+    highRefreshRateEnabled: Boolean, maximumRefreshRate: Float,
     onHabitSkin: (HabitWeekSkin) -> Unit, onBackgroundSkin: (AppBackgroundSkin) -> Unit,
-    onTags: (String) -> Unit, onDismiss: () -> Unit, onDataRestored: () -> Unit = {}) {
+    onTags: (String) -> Unit, onHighRefreshRate: (Boolean) -> Unit,
+    onDismiss: () -> Unit, onDataRestored: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var password by remember { mutableStateOf("") }
@@ -80,11 +82,27 @@ internal fun SettingsPanel(backup: FishKingBackup, habitSkin: HabitWeekSkin, bac
                         modifier = Modifier.weight(1f),
                     )
                 }
+                Text("显示刷新率", style = MaterialTheme.typography.titleMedium)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(Modifier.weight(1f)) {
+                        Text("高刷模式")
+                        Text(
+                            if (maximumRefreshRate > 60f) "请求设备最高 ${formatRefreshRate(maximumRefreshRate)}Hz；系统仍可能限制"
+                            else "当前系统只向 App 开放 ${formatRefreshRate(maximumRefreshRate)}Hz",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Switch(
+                        checked = highRefreshRateEnabled,
+                        onCheckedChange = onHighRefreshRate,
+                        enabled = !busy && maximumRefreshRate > 60f,
+                    )
+                }
                 OutlinedTextField(tagDraft, { tagDraft = it }, label = { Text("预设 TAG · 空格分隔") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
                 TextButton(onClick = { onTags(tagDraft); status = "预设 TAG 已保存" }, enabled = !busy) { Text("保存标签") }
                 HorizontalDivider()
                 Text("数据备份与导入", style = MaterialTheme.typography.titleMedium)
-                Text("包含待办、习惯、日记、原始附件和主题/TAG设置。密码不保存，遗忘将无法恢复。", style = MaterialTheme.typography.bodySmall)
+                Text("包含待办、习惯、日记、原始附件和主题/TAG/高刷设置。密码不保存，遗忘将无法恢复。", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(password, { password = it }, label = { Text("备份密码（至少8字符）") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, enabled = !busy)
                 Row {
                     TextButton(onClick = { export.launch("fishking-${java.time.LocalDate.now()}.fkb") }, enabled = !busy && password.length >= 8) { Text("备份/导出") }
@@ -120,3 +138,6 @@ internal fun SettingsPanel(backup: FishKingBackup, habitSkin: HabitWeekSkin, bac
         }
     }
 }
+
+private fun formatRefreshRate(rate: Float): String =
+    if (rate % 1f == 0f) rate.toInt().toString() else "%.1f".format(java.util.Locale.US, rate)

@@ -14,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 
 class FishKingApplication : Application() {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    @Volatile private var habitWidgetRuntimeInstalled = false
     val database: FishKingDatabase by lazy { FishKingDatabase.create(this) }
     val container: FishKingContainer by lazy { FishKingContainer(database) }
     val journalMediaStore by lazy { PrivateJournalMediaStore(this) }
@@ -28,11 +29,13 @@ class FishKingApplication : Application() {
             ensureOccurrences = container.homeRepository::ensureOccurrenceWindow,
             scope = applicationScope,
         )
-        HabitWidgetRuntime.install(
-            this,
-            container.homeRepository,
-            container.habitRepository,
-            applicationScope,
-        )
+        ensureHabitWidgetRuntime()
+    }
+
+    @Synchronized
+    fun ensureHabitWidgetRuntime() {
+        if (habitWidgetRuntimeInstalled || !com.fishking.app.widget.HabitWidgetProvider.hasWidgets(this)) return
+        HabitWidgetRuntime.install(this, container.homeRepository, container.habitRepository, applicationScope)
+        habitWidgetRuntimeInstalled = true
     }
 }

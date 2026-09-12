@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 
 class HabitWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
+        (context.applicationContext as? FishKingApplication)?.ensureHabitWidgetRuntime()
         ids.forEach { manager.updateAppWidget(it, widgetViews(context, it)) }
         manager.notifyAppWidgetViewDataChanged(ids, R.id.widget_list)
     }
@@ -61,6 +62,12 @@ class HabitWidgetProvider : AppWidgetProvider() {
             Intent.ACTION_TIME_CHANGED,
             Intent.ACTION_TIMEZONE_CHANGED,
         )
+
+        fun hasWidgets(context: Context): Boolean {
+            val manager = AppWidgetManager.getInstance(context)
+            val component = ComponentName(context, HabitWidgetProvider::class.java)
+            return manager.getAppWidgetIds(component).isNotEmpty()
+        }
 
         fun refreshAll(context: Context) {
             val manager = AppWidgetManager.getInstance(context)

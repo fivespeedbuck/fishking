@@ -176,7 +176,7 @@ fun HomeRoute(
     val onEditingReminderToggled: (LocalTime) -> Unit = { viewModel.toggleEditingReminder(it) }
 
     LaunchedEffect(selectedDate) { viewModel.selectDate(selectedDate) }
-    LaunchedEffect(weekView, selectedDate, navigationToken) { if (weekView) viewModel.resetWeekMonths(selectedDate) }
+    LaunchedEffect(weekView, selectedDate, navigationToken) { viewModel.setWeekViewActive(weekView, selectedDate) }
     LaunchedEffect(weekView) {
         viewModel.cancelDraft()
         viewModel.cancelEditing()
@@ -550,7 +550,9 @@ fun HomeScreen(
         }
     }
 
-    val sections = buildHomeDisplaySections(selectedDate, todos, habits)
+    val sections = remember(selectedDate, todos, habits) {
+        buildHomeDisplaySections(selectedDate, todos, habits)
+    }
     val currentSections by rememberUpdatedState(sections)
     val currentTodos by rememberUpdatedState(todos)
     val currentHabits by rememberUpdatedState(habits)
@@ -586,7 +588,7 @@ fun HomeScreen(
                     is HomeDisplayItem.Todo -> currentTodos.firstOrNull { it.id == source.value.id }
                         ?.let { HomeDisplayItem.Todo(it) }
                     is HomeDisplayItem.Habit -> buildHomeDisplaySections(selectedDate, currentTodos, currentHabits)
-                        .open.plus(buildHomeDisplaySections(selectedDate, currentTodos, currentHabits).completed)
+                        .let { updated -> updated.open + updated.completed }
                         .firstOrNull { it.stableKey == source.stableKey }
                 }
             }.first { current -> current == null || current.isCompleteOnHome != scene.source.isCompleteOnHome }

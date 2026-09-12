@@ -16,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -177,6 +178,23 @@ class RoomHabitRepositoryTest {
     }
 
     @Test
+    fun deletedHabitChildrenStayRecoverableButAreExcludedFromActiveProjectionFlows() = runTest {
+        val previousWeek = currentWeek.minusWeeks(1)
+        val habitId = createHabit(HabitPeriod.DAILY, 1, previousWeek)
+        repository.toggleCheckIn(habitId, previousWeek.plusDays(1))
+        repository.toggleWeekSkip(habitId, previousWeek)
+
+        repository.deleteHabit(habitId)
+
+        assertTrue(database.habitDao().observeAllVersions().first().isEmpty())
+        assertTrue(database.habitDao().observeAllRecords().first().isEmpty())
+        assertTrue(database.habitDao().observeAllSkips().first().isEmpty())
+        assertNotNull(database.habitDao().firstVersion(habitId))
+        assertNotNull(database.habitDao().dayRecord(habitId, previousWeek.plusDays(1)))
+        assertTrue(database.habitDao().isWeekSkipped(habitId, previousWeek))
+    }
+
+    @Test
     fun timelineEndsAtCurrentWeekAndKeepsHistoricalVersionPresentation() = runTest {
         val twoWeeksAgo = currentWeek.minusWeeks(2)
         val habitId = createHabit(
@@ -257,6 +275,20 @@ class RoomHabitRepositoryTest {
         assertTrue(month.flatMap { it.items }.all { it.records.isEmpty() })
         val expanded = repository.observeTimelineRange(today, first.minusWeeks(4), last.plusWeeks(4)).first()
         assertEquals(month.size + 8, expanded.size)
+    }
+
+    @Test
+    fun visibleWeeksShareOneConvertedRecordHistoryPerHabit() = runTest {
+        val previousWeek = currentWeek.minusWeeks(1)
+        val habitId = createHabit(HabitPeriod.DAILY, 1, previousWeek)
+        repository.toggleCheckIn(habitId, previousWeek.plusDays(1))
+        repository.toggleCheckIn(habitId, today)
+
+        val weeks = repository.observeTimelineRange(today, previousWeek, currentWeek).first()
+
+        assertEquals(2, weeks.size)
+        assertSame(weeks[0].items.single().records, weeks[1].items.single().records)
+        assertEquals(2, weeks[0].items.single().records.size)
     }
 
     @Test

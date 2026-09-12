@@ -66,7 +66,8 @@ class FishKingBackupTest {
         db.execSQL("INSERT INTO media_assets VALUES ('asset-backup', ?, NULL, 'image/jpeg', ?, 'checksum', NULL, NULL, 10)", arrayOf(sourceMedia.absolutePath, sourceMedia.length()))
         db.execSQL("INSERT INTO journal_block_media_cross_ref VALUES ('block-backup', 'asset-backup', 0)")
         context.getSharedPreferences("fishking_settings", Context.MODE_PRIVATE).edit()
-            .putString("skin", "habit_spaced").putString("tags", "工作 健康").commit()
+            .putString("skin", "habit_spaced").putString("tags", "工作 健康")
+            .putBoolean(HIGH_REFRESH_RATE_KEY, true).commit()
 
         val archive = File(context.cacheDir, "fishking-roundtrip.fkb")
         backup.export(Uri.fromFile(archive), PASSWORD)
@@ -78,7 +79,8 @@ class FishKingBackupTest {
         db.execSQL("DELETE FROM journals")
         db.execSQL("DELETE FROM todo_occurrences")
         context.getSharedPreferences("fishking_settings", Context.MODE_PRIVATE).edit()
-            .putString("skin", "habit_unified").putString("tags", "临时").commit()
+            .putString("skin", "habit_unified").putString("tags", "临时")
+            .putBoolean(HIGH_REFRESH_RATE_KEY, false).commit()
 
         val prepared = backup.prepare(Uri.fromFile(archive), PASSWORD)
         backup.restore(prepared, PASSWORD)
@@ -94,6 +96,7 @@ class FishKingBackupTest {
         val settings = context.getSharedPreferences("fishking_settings", Context.MODE_PRIVATE)
         assertEquals("habit_spaced", settings.getString("skin", null))
         assertEquals("工作 健康", settings.getString("tags", null))
+        assertTrue(settings.getBoolean(HIGH_REFRESH_RATE_KEY, false))
     }
 
     @Test

@@ -18,8 +18,11 @@ import java.time.LocalDate
 import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -124,6 +127,29 @@ class HomeViewModelTest {
         assertTrue(LocalDate.of(2026, 8, 1) in home.ensuredDates)
         assertTrue(LocalDate.of(2026, 10, 31) in home.ensuredDates)
         assertEquals(92, home.ensuredDates.distinct().size)
+    }
+
+    @Test
+    fun dayModeDoesNotSubscribeToWholeMonthData() = runTest(dispatcher) {
+        val home = RecordingHomeRepository()
+        val habits = RecordingHabitRepository()
+        val viewModel = HomeViewModel(SavedStateHandle(), home, habits, EmptyLifeRepository)
+        val todoCollector = launch { viewModel.weekTodos.collect() }
+        val habitCollector = launch { viewModel.weekHabits.collect() }
+
+        advanceUntilIdle()
+        assertTrue(home.observedDates.isEmpty())
+        assertTrue(habits.observedWeeks.isEmpty())
+
+        viewModel.setWeekViewActive(true, LocalDate.of(2026, 9, 6))
+        advanceUntilIdle()
+        assertEquals(30, home.observedDates.distinct().size)
+        assertEquals(5, habits.observedWeeks.distinct().size)
+
+        viewModel.setWeekViewActive(false, LocalDate.of(2026, 9, 6))
+        advanceUntilIdle()
+        todoCollector.cancelAndJoin()
+        habitCollector.cancelAndJoin()
     }
 
     @Test
@@ -250,6 +276,7 @@ class HomeViewModelTest {
 
 private class RecordingHomeRepository : HomeRepository {
     val ensuredDates = mutableListOf<LocalDate>()
+    val observedDates = mutableListOf<LocalDate>()
     var createdDate: LocalDate? = null
     var createdTitle: String? = null
     var lastMove: Pair<String, LocalDate>? = null
@@ -265,7 +292,10 @@ private class RecordingHomeRepository : HomeRepository {
     var lastCompletionToggle: String? = null
     override suspend fun remindersFor(occurrenceId: String) = currentReminders
 
-    override fun observeTodos(date: LocalDate): Flow<List<TodoOccurrence>> = flowOf(emptyList())
+    override fun observeTodos(date: LocalDate): Flow<List<TodoOccurrence>> {
+        observedDates += date
+        return flowOf(emptyList())
+    }
     override fun observeLinkedGoalIds(occurrenceId: String): Flow<List<String>> = flowOf(emptyList())
 
     override suspend fun createTodo(
@@ -332,6 +362,36 @@ private fun sampleTodo() = TodoOccurrence(
 
 private object EmptyHabitRepository : HabitRepository {
     override fun observeWeek(weekStart: LocalDate): Flow<List<HabitWeekItem>> = flowOf(emptyList())
+    override fun observeTimeline(currentDate: LocalDate): Flow<List<HabitWeekSnapshot>> = flowOf(emptyList())
+    override suspend fun createHabit(
+        title: String,
+        color: Long,
+        startDate: LocalDate,
+        period: HabitPeriod,
+        targetCount: Int,
+        scheduleDays: Set<Int>,
+    ): String = "habit"
+    override suspend fun updateHabit(
+        habitId: String,
+        effectiveFromWeek: LocalDate,
+        title: String,
+        color: Long,
+        period: HabitPeriod,
+        targetCount: Int,
+        scheduleDays: Set<Int>,
+    ) = Unit
+    override suspend fun toggleCheckIn(habitId: String, date: LocalDate): Int? = null
+    override suspend fun toggleWeekSkip(habitId: String, weekStart: LocalDate): Boolean? = null
+    override suspend fun endHabitFromWeek(habitId: String, weekStart: LocalDate) = Unit
+}
+
+private class RecordingHabitRepository : HabitRepository {
+    val observedWeeks = mutableListOf<LocalDate>()
+
+    override fun observeWeek(weekStart: LocalDate): Flow<List<HabitWeekItem>> {
+        observedWeeks += weekStart
+        return flowOf(emptyList())
+    }
     override fun observeTimeline(currentDate: LocalDate): Flow<List<HabitWeekSnapshot>> = flowOf(emptyList())
     override suspend fun createHabit(
         title: String,

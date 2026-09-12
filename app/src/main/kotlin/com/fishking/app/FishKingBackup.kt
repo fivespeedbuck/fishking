@@ -62,6 +62,7 @@ class FishKingBackup(private val context: Context, private val database: FishKin
                     val snapshot = JSONObject().put("format", "fishking-backup-v1").put("schema", database.openHelper.writableDatabase.version)
                         .put("tables", tables).put("settings", JSONObject().put("skin", preferences.getString("skin", "habit_unified"))
                             .put("backgroundSkin", preferences.getString("background_skin", "background_classic_blue"))
+                            .put("highRefreshRate", preferences.getBoolean(HIGH_REFRESH_RATE_KEY, false))
                             .put("tags", preferences.getString("tags", "")))
                     // Keep the logical rows and owned media on the same read snapshot.
                     // The settings screen blocks ordinary edits, but background saves
@@ -187,11 +188,13 @@ class FishKingBackup(private val context: Context, private val database: FishKin
                     .preferenceValue
                 check(preferences.edit().putString("skin", restoredSkin)
                     .putString("background_skin", restoredBackground)
+                    .putBoolean(HIGH_REFRESH_RATE_KEY, settings.optBoolean("highRefreshRate", false))
                     .putString("tags", settings.optString("tags")).commit())
             }
         } catch (failure: Throwable) {
             preferences.edit().putString("skin", oldPreferences["skin"] as? String ?: "habit_unified")
                 .putString("background_skin", oldPreferences["background_skin"] as? String ?: "background_classic_blue")
+                .putBoolean(HIGH_REFRESH_RATE_KEY, oldPreferences[HIGH_REFRESH_RATE_KEY] as? Boolean ?: false)
                 .putString("tags", oldPreferences["tags"] as? String ?: "").commit()
             copied.forEach { it.delete() }; throw failure
         } finally { discard(prepared) }

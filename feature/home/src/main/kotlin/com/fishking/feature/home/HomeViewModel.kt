@@ -51,8 +51,10 @@ class HomeViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val visibleMonths = MutableStateFlow(java.time.YearMonth.now() to java.time.YearMonth.now())
-    val weekTodos: StateFlow<Map<LocalDate, List<TodoOccurrence>>> = visibleMonths
-        .flatMapLatest { months ->
+    private val weekDataActive = MutableStateFlow(false)
+    val weekTodos: StateFlow<Map<LocalDate, List<TodoOccurrence>>> = combine(weekDataActive, visibleMonths) { active, months -> active to months }
+        .flatMapLatest { (active, months) ->
+            if (!active) return@flatMapLatest flowOf(emptyMap())
             val dates = monthDates(months)
             combine(dates.map(repository::observeTodos)) { values ->
                 dates.zip(values.toList()).toMap()
@@ -60,7 +62,8 @@ class HomeViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    val weekHabits: StateFlow<Map<LocalDate, List<HabitWeekItem>>> = visibleMonths.flatMapLatest { months ->
+    val weekHabits: StateFlow<Map<LocalDate, List<HabitWeekItem>>> = combine(weekDataActive, visibleMonths) { active, months -> active to months }.flatMapLatest { (active, months) ->
+        if (!active) return@flatMapLatest flowOf(emptyMap())
         val weeks = monthDates(months).map(HabitRules::weekStart).distinct()
         combine(weeks.map(habitRepository::observeWeek)) { values -> weeks.zip(values.toList()).toMap() }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
@@ -68,7 +71,11 @@ class HomeViewModel(
     fun resetWeekMonths(date: LocalDate) {
         val month = java.time.YearMonth.from(date)
         visibleMonths.value = month to month
+        weekDataActive.value = true
         ensureMonth(month)
+    }
+    fun setWeekViewActive(active: Boolean, date: LocalDate) {
+        if (active) resetWeekMonths(date) else weekDataActive.value = false
     }
     fun loadPreviousMonth() {
         val month = visibleMonths.value.first.minusMonths(1)

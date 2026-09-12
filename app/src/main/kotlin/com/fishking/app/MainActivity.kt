@@ -50,9 +50,14 @@ import com.fishking.core.reminder.ReminderRuntime
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    private val settingsPreferences by lazy {
+        getSharedPreferences(SETTINGS_PREFERENCES_NAME, android.content.Context.MODE_PRIVATE)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        applyHighRefreshRatePreference(settingsPreferences.getBoolean(HIGH_REFRESH_RATE_KEY, false))
         val container = (application as FishKingApplication).container
         setContent {
             FishKingTheme {
@@ -73,6 +78,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        applyHighRefreshRatePreference(settingsPreferences.getBoolean(HIGH_REFRESH_RATE_KEY, false))
         lifecycleScope.launch { ReminderRuntime.reconcileNow() }
     }
 }
@@ -101,7 +107,7 @@ private fun FishKingApp(
     val context = LocalContext.current
     val backup = remember { FishKingBackup(context, (context.applicationContext as FishKingApplication).database) }
     var settingsVisible by remember { mutableStateOf(false) }
-    val settingsPreferences = remember { context.getSharedPreferences("fishking_settings", android.content.Context.MODE_PRIVATE) }
+    val settingsPreferences = remember { context.getSharedPreferences(SETTINGS_PREFERENCES_NAME, android.content.Context.MODE_PRIVATE) }
     var habitWeekSkin by remember {
         mutableStateOf(HabitWeekSkin.fromPreference(settingsPreferences.getString("skin", null)))
     }
@@ -109,6 +115,13 @@ private fun FishKingApp(
         mutableStateOf(AppBackgroundSkin.fromPreference(settingsPreferences.getString("background_skin", null)))
     }
     var presetTags by remember { mutableStateOf(settingsPreferences.getString("tags", "").orEmpty()) }
+    var highRefreshRateEnabled by remember {
+        mutableStateOf(settingsPreferences.getBoolean(HIGH_REFRESH_RATE_KEY, false))
+    }
+    val activity = context as? MainActivity
+    val maximumRefreshRate = remember(activity) {
+        activity?.maximumSupportedRefreshRate() ?: 60f
+    }
     var dataEpoch by remember { mutableStateOf(0) }
 
     var calendarVisible by remember { mutableStateOf(false) }
@@ -121,15 +134,22 @@ private fun FishKingApp(
         calendarVisible = false
     }, { calendarVisible = false }, if (selectedSection == FishKingSection.JOURNAL) journalDates else completedDates,
         if (selectedSection == FishKingSection.JOURNAL) "有日记" else "有已完成待办")
-    if (settingsVisible) SettingsPanel(backup, habitWeekSkin, backgroundSkin, presetTags,
+    if (settingsVisible) SettingsPanel(backup, habitWeekSkin, backgroundSkin, presetTags, highRefreshRateEnabled, maximumRefreshRate,
         { habitWeekSkin = it; settingsPreferences.edit().putString("skin", it.preferenceValue).apply() },
         { backgroundSkin = it; settingsPreferences.edit().putString("background_skin", it.preferenceValue).apply() },
         { presetTags = it.split(Regex("[\\s#,，]+")).filter(String::isNotBlank).distinct().joinToString(" "); settingsPreferences.edit().putString("tags", presetTags).apply() },
+        { enabled ->
+            highRefreshRateEnabled = enabled
+            settingsPreferences.edit().putBoolean(HIGH_REFRESH_RATE_KEY, enabled).apply()
+            activity?.applyHighRefreshRatePreference(enabled)
+        },
         { settingsVisible = false }, onDataRestored = {
             (context as? androidx.activity.ComponentActivity)?.viewModelStore?.clear()
             habitWeekSkin = HabitWeekSkin.fromPreference(settingsPreferences.getString("skin", null))
             backgroundSkin = AppBackgroundSkin.fromPreference(settingsPreferences.getString("background_skin", null))
             presetTags = settingsPreferences.getString("tags", "").orEmpty()
+            highRefreshRateEnabled = settingsPreferences.getBoolean(HIGH_REFRESH_RATE_KEY, false)
+            activity?.applyHighRefreshRatePreference(highRefreshRateEnabled)
             dataEpoch++; settingsVisible = false; journalEditing = false
         })
 
