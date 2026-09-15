@@ -504,6 +504,9 @@ private data class HabitDayPresentation(
     val title: String,
 )
 
+internal fun habitBackfillLabelColor(color: Color, enabled: Boolean): Color =
+    color.copy(alpha = if (enabled) 1f else .4f)
+
 @Composable
 private fun HabitDayCircle(
     period: HabitPeriod,
@@ -587,7 +590,7 @@ private fun HabitDayCircle(
             if (period == HabitPeriod.DAILY) {
                 Text(
                     text = "$count/$targetCount" + if (isBackfilled) " 补" else "",
-                    color = color.copy(alpha = if (enabled) 1f else .4f),
+                    color = habitBackfillLabelColor(color, enabled),
                     fontSize = 8.sp,
                     lineHeight = 8.sp,
                     fontWeight = FontWeight.Bold,
@@ -602,7 +605,7 @@ private fun HabitDayCircle(
             if (isBackfilled && period != HabitPeriod.DAILY) {
                 Text(
                     text = "补",
-                    color = DavePalette.Meta,
+                    color = habitBackfillLabelColor(color, enabled),
                     fontSize = 8.sp,
                     lineHeight = 8.sp,
                     fontWeight = FontWeight.Bold,

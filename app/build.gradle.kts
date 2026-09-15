@@ -12,8 +12,8 @@ android {
         applicationId = "com.fishking.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "0.1.14"
+        versionCode = 27
+        versionName = "0.1.15"
         manifestPlaceholders["appLabel"] = "咸鱼大王"
     }
 
